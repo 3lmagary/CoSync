@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FolderPlus, File, Edit2, Trash2, Share2, LogOut, FolderOpen,
-  ChevronRight, ChevronDown, Folder, Sun, Moon, Copy, Check, Plus
+  ChevronRight, ChevronDown, Folder, Sun, Moon, Copy, Check, Plus, Key
 } from 'lucide-react';
 
 interface Workspace {
@@ -370,9 +370,22 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginRight: '4px' }}>
             Hi, <span style={{ color: 'var(--active-text)', fontWeight: 600 }}>{username}</span>
           </span>
-          <button onClick={onLogout} className="action-btn delete" title="Sign Out" style={{ padding: '2px' }}>
-            <LogOut size={15} />
-          </button>
+          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+            <button 
+              onClick={() => {
+                navigator.clipboard.writeText(token);
+                alert('Obsidian sync token copied to clipboard!');
+              }} 
+              className="action-btn rename" 
+              title="Copy Obsidian Sync Token" 
+              style={{ padding: '4px' }}
+            >
+              <Key size={13} />
+            </button>
+            <button onClick={onLogout} className="action-btn delete" title="Sign Out" style={{ padding: '2px' }}>
+              <LogOut size={15} />
+            </button>
+          </div>
         </div>
       </div>
 
