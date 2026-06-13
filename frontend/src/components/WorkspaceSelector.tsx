@@ -686,6 +686,9 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
         <div className="share-modal-overlay" onClick={() => setShareModal(null)}>
           <div className="share-modal" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Invite to {shareModal.workspaceName}</h3>
+            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--active-text)', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              Workspace ID: {shareModal.workspaceId}
+            </p>
             <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
               Anyone with this link will be added as a collaborator to this workspace.
             </p>
