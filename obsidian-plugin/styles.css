@@ -1,0 +1,57 @@
+/* Styles for Yjs collaborative cursors in CodeMirror 6 inside Obsidian */
+
+.cm-ySelection {
+  background-color: rgba(99, 102, 241, 0.2);
+  transition: background-color 0.2s ease;
+}
+
+.cm-ySelectionCaret {
+  position: relative;
+  border-left: 2px solid #6366f1;
+  border-right: 0;
+  margin-left: -1px;
+  margin-right: -1px;
+  box-sizing: border-box;
+  display: inline-block;
+  height: 1.2em;
+  vertical-align: middle;
+  animation: cm-cursor-blink 1.2s infinite;
+}
+
+.cm-ySelectionInfo {
+  position: absolute;
+  top: -1.35em;
+  left: -2px;
+  font-size: 10px;
+  font-family: var(--font-interface, sans-serif);
+  font-weight: 600;
+  color: white;
+  background-color: #6366f1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-bottom-left-radius: 0;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  transition: opacity 0.3s ease;
+  opacity: 0;
+}
+
+/* Show client caret info tooltip when hovering or when cursor moves */
+.cm-ySelectionCaret:hover .cm-ySelectionInfo,
+.cm-ySelectionCaret:focus .cm-ySelectionInfo,
+.cm-ySelectionCaret:active .cm-ySelectionInfo,
+.cm-ySelectionCaret:has(+ .cm-ySelection) .cm-ySelectionInfo {
+  opacity: 1;
+}
+
+@keyframes cm-cursor-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}

@@ -1,0 +1,514 @@
+:root {
+  font-family: 'Outfit', 'Cairo', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  --bg-color: #08090d;
+  --app-bg: #0b0d13;
+  --text-color: #f3f4f6;
+  --text-muted: #9ca3af;
+  --sidebar-bg: rgba(13, 15, 20, 0.65);
+  --navbar-bg: rgba(13, 15, 20, 0.45);
+  --editor-wrapper-bg: rgba(13, 15, 20, 0.35);
+  --glass-card-bg: rgba(18, 20, 29, 0.35);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-muted: rgba(255, 255, 255, 0.04);
+  --active-bg: rgba(99, 102, 241, 0.15);
+  --active-text: #a5b4fc;
+  --item-bg: rgba(255, 255, 255, 0.02);
+  --item-hover-bg: rgba(255, 255, 255, 0.06);
+  --gradient-primary: linear-gradient(135deg, #818cf8, #c084fc);
+  --btn-primary-bg: linear-gradient(135deg, #6366f1, #a855f7);
+  --editor-bg: #0f1115;
+  --editor-text: #e5e7eb;
+  
+  --aura-grad-1: radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 55%);
+  --aura-grad-2: radial-gradient(at 100% 0%, rgba(244, 63, 94, 0.12) 0px, transparent 55%);
+  --aura-grad-3: radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.12) 0px, transparent 55%);
+  --aura-grad-4: radial-gradient(at 0% 100%, rgba(236, 72, 153, 0.1) 0px, transparent 55%);
+  --aura-grad-5: radial-gradient(at 50% 50%, rgba(16, 185, 129, 0.04) 0px, transparent 50%);
+
+  --active-border-glow: #6366f1;
+  --modal-bg: rgba(15, 17, 26, 0.85);
+
+  color: var(--text-color);
+  background-color: var(--bg-color);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.light-theme {
+  color-scheme: light;
+  --bg-color: #f3f4f6;
+  --app-bg: #f9fafb;
+  --text-color: #1f2937;
+  --text-muted: #6b7280;
+  --sidebar-bg: rgba(255, 255, 255, 0.8);
+  --navbar-bg: rgba(255, 255, 255, 0.75);
+  --editor-wrapper-bg: rgba(255, 255, 255, 0.7);
+  --glass-card-bg: rgba(255, 255, 255, 0.8);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-muted: rgba(0, 0, 0, 0.04);
+  --active-bg: rgba(99, 102, 241, 0.08);
+  --active-text: #4f46e5;
+  --item-bg: rgba(0, 0, 0, 0.01);
+  --item-hover-bg: rgba(0, 0, 0, 0.03);
+  --gradient-primary: linear-gradient(135deg, #4f46e5, #9333ea);
+  --btn-primary-bg: linear-gradient(135deg, #4f46e5, #9333ea);
+  --editor-bg: #ffffff;
+  --editor-text: #1f2937;
+  
+  --aura-grad-1: radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.06) 0px, transparent 55%);
+  --aura-grad-2: radial-gradient(at 100% 0%, rgba(244, 63, 94, 0.05) 0px, transparent 55%);
+  --aura-grad-3: radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.05) 0px, transparent 55%);
+  --aura-grad-4: radial-gradient(at 0% 100%, rgba(236, 72, 153, 0.04) 0px, transparent 55%);
+  --aura-grad-5: radial-gradient(at 50% 50%, rgba(16, 185, 129, 0.01) 0px, transparent 50%);
+
+  --active-border-glow: #4f46e5;
+  --modal-bg: rgba(255, 255, 255, 0.95);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--text-color);
+  background-color: var(--bg-color);
+  transition: color 0.3s ease, background-color 0.3s ease;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Premium Radial Mesh Gradient Aura Background */
+.app-container {
+  min-height: 100vh;
+  background-color: var(--app-bg);
+  background-image: 
+    var(--aura-grad-1),
+    var(--aura-grad-2),
+    var(--aura-grad-3),
+    var(--aura-grad-4),
+    var(--aura-grad-5);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: background-color 0.3s ease;
+}
+
+/* Header Navbar */
+.app-navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 2.5rem;
+  background: var(--navbar-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 10;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.brand {
+  font-size: 1.6rem;
+  font-weight: 800;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  letter-spacing: -0.5px;
+}
+
+/* Custom Cursors Style configuration */
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  border-right: 2px solid;
+  border-color: inherit;
+  word-break: normal;
+  pointer-events: none;
+  animation: cursor-blink 1.2s infinite;
+}
+
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -2px;
+  font-size: 10px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  line-height: normal;
+  user-select: none;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-bottom-left-radius: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes cursor-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* TipTap Editor Styles */
+.tiptap {
+  outline: none;
+  padding: 2.5rem;
+  font-size: 1.15rem;
+  line-height: 1.8;
+  color: var(--editor-text);
+  background: var(--editor-bg);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  height: 100%;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  color: var(--text-muted);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.tiptap pre {
+  background: rgba(0, 0, 0, 0.25);
+  color: #a5b4fc;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  padding: 0.85rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+
+.tiptap blockquote {
+  border-left: 4px solid var(--active-border-glow);
+  padding-left: 1.25rem;
+  font-style: italic;
+  color: var(--text-muted);
+  margin: 1.25rem 0;
+}
+
+.tiptap hr {
+  border: none;
+  border-top: 2px solid var(--border-color);
+  margin: 2rem 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.65rem 1rem;
+  background: var(--navbar-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-color);
+  transform: translateY(-1px);
+}
+
+.toolbar-btn:active {
+  transform: translateY(0);
+}
+
+.toolbar-btn.is-active {
+  background: var(--active-bg);
+  color: var(--active-text);
+}
+
+.editor-wrapper {
+  background: var(--editor-wrapper-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+
+/* Buttons & Inputs */
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: white;
+  border: none;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.2);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.3);
+}
+
+.btn-primary:active {
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: var(--item-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-secondary:hover {
+  background: var(--item-hover-bg);
+  border-color: var(--border-color);
+  color: var(--text-color);
+  transform: translateY(-1px);
+}
+
+.input-field {
+  background: var(--item-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  padding: 0.75rem 1.15rem;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.25s ease;
+}
+
+.input-field:focus {
+  background: var(--item-hover-bg);
+  border-color: var(--active-border-glow);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+/* Glass Cards */
+.glass-card {
+  background: var(--glass-card-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 2.25rem;
+  box-shadow: 
+    0 20px 50px rgba(0, 0, 0, 0.25),
+    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+/* Workspace & Document Row Elements (Clean CSS Classes) */
+.workspace-item, .document-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--item-bg);
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.workspace-item:hover, .document-item:hover {
+  background: var(--item-hover-bg);
+  border-color: var(--border-color);
+  transform: translateY(-1px);
+}
+
+.workspace-item.active, .document-item.active {
+  background: var(--active-bg);
+  border-color: var(--active-border-glow);
+  color: var(--active-text);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.05);
+}
+
+/* Connection Badges */
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.3rem 0.85rem;
+  border-radius: 99px;
+  background: var(--item-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.status-badge.connected {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.15);
+}
+
+.status-badge.connecting {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.15);
+}
+
+.status-badge.disconnected {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.15);
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 1;
+  }
+}
+
+/* Custom Action Buttons for Workspace Selector */
+.action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.35rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.action-btn:hover {
+  background: var(--item-hover-bg);
+  transform: scale(1.08);
+}
+
+.action-btn.rename:hover {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.action-btn.share:hover {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.action-btn.delete:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Draggable Sidebar Divider */
+.sidebar-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--border-color);
+  transition: background-color 0.2s, width 0.2s;
+  z-index: 10;
+  align-self: stretch;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--active-border-glow);
+  width: 6px;
+}
+
+/* Share Modal overlay and wrapper */
+.share-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.share-modal {
+  width: 100%;
+  max-width: 500px;
+  background: var(--modal-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  color: var(--text-color);
+  backdrop-filter: blur(20px);
+}
+
+
