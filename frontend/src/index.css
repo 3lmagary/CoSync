@@ -171,6 +171,19 @@ body {
   }
 }
 
+.remote-cursor {
+  position: relative;
+  border-left: 2px solid currentColor;
+  margin-left: -1px;
+  margin-right: -1px;
+  box-sizing: border-box;
+  display: inline-block;
+  height: 1.2em;
+  vertical-align: middle;
+  pointer-events: none;
+  animation: cursor-blink 1.2s infinite;
+}
+
 /* TipTap Editor Styles */
 .tiptap {
   outline: none;
@@ -206,8 +219,8 @@ body {
 }
 
 .tiptap blockquote {
-  border-left: 4px solid var(--active-border-glow);
-  padding-left: 1.25rem;
+  border-inline-start: 4px solid var(--active-border-glow);
+  padding-inline-start: 1.25rem;
   font-style: italic;
   color: var(--text-muted);
   margin: 1.25rem 0;
@@ -217,6 +230,66 @@ body {
   border: none;
   border-top: 2px solid var(--border-color);
   margin: 2rem 0;
+}
+
+/* TipTap Headings & Lists Typography */
+.tiptap h1 {
+  font-size: 2.25rem;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-top: 1.85rem;
+  margin-bottom: 0.85rem;
+  color: var(--text-color);
+  letter-spacing: -0.025em;
+}
+
+.tiptap h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 1.6rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-color);
+  letter-spacing: -0.02em;
+}
+
+.tiptap h3 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.35rem;
+  margin-bottom: 0.6rem;
+  color: var(--text-color);
+}
+
+.tiptap p {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.tiptap ul {
+  list-style-type: disc;
+  padding-inline-start: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.tiptap ol {
+  list-style-type: decimal;
+  padding-inline-start: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.tiptap li {
+  margin-bottom: 0.4rem;
+}
+
+.tiptap code {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--active-text);
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.88em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .editor-toolbar {
@@ -509,6 +582,39 @@ body {
   gap: 1.5rem;
   color: var(--text-color);
   backdrop-filter: blur(20px);
+}
+
+/* Remote Collaborative Cursor Presence */
+.remote-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  display: inline;
+}
+
+.remote-cursor::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  height: 1.2em;
+  border-left: 2px solid currentColor;
+  animation: remote-cursor-blink 1s infinite;
+}
+
+@keyframes remote-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.remote-cursor div {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.remote-cursor:hover div {
+  opacity: 1;
 }
 
 

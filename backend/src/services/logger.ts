@@ -8,9 +8,23 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
+const serializeErrors = winston.format((info) => {
+  for (const key of Object.keys(info)) {
+    if (info[key] instanceof Error) {
+      info[key] = {
+        ...info[key],
+        message: info[key].message,
+        stack: info[key].stack
+      };
+    }
+  }
+  return info;
+});
+
 const customFormat = winston.format.combine(
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
+  serializeErrors(),
   winston.format.json()
 );
 

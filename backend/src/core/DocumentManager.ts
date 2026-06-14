@@ -13,6 +13,21 @@ export class DocumentManager {
   }
 
   /**
+   * Checks if a document exists in the metadata table.
+   */
+  async exists(documentId: string): Promise<boolean> {
+    const doc = await this.dbProvider.getDocument(documentId);
+    return !!doc;
+  }
+
+  /**
+   * Explicitly registers a new document in a workspace.
+   */
+  async createDocument(documentId: string, workspaceId: string, title: string): Promise<any> {
+    return await this.dbProvider.createDocument(documentId, workspaceId, title);
+  }
+
+  /**
    * Reconstructs the document Y.Doc by loading the latest snapshot and replaying updates.
    */
   async loadDocument(documentId: string): Promise<Y.Doc> {

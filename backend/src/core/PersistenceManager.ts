@@ -44,6 +44,13 @@ export class PersistenceManager {
         const filePath = path.join(this.walDir, file);
         
         try {
+          const doc = await this.dbProvider.getDocument(documentId);
+          if (!doc) {
+            logger.info(`WAL document ${documentId} no longer exists in DB. Cleaning up WAL file.`);
+            fs.unlinkSync(filePath);
+            continue;
+          }
+
           const content = fs.readFileSync(filePath, 'utf8');
           const lines = content.split('\n').filter(line => line.trim().length > 0);
           

@@ -27,6 +27,7 @@ export class RoomManager {
   private awarenessManager: AwarenessManager;
 
   private rooms: Map<string, Room> = new Map();
+  private pendingRooms: Map<string, Promise<Room>> = new Map();
 
   constructor(
     documentManager: DocumentManager,
@@ -47,44 +48,53 @@ export class RoomManager {
     let room = this.rooms.get(documentId);
     if (room) return room;
 
-    logger.info(`Creating active memory room for document: ${documentId}`);
+    let pending = this.pendingRooms.get(documentId);
+    if (pending) return pending;
 
-    // Load Y.Doc state using snapshot + updates
-    const doc = await this.documentManager.loadDocument(documentId);
-    const awareness = this.awarenessManager.getOrCreateAwareness(documentId, doc);
-    
-    room = {
-      doc,
-      clients: new Set<WebSocket>(),
-      awareness,
-      documentId
-    };
+    const promise = (async () => {
+      logger.info(`Creating active memory room for document: ${documentId}`);
 
-    // Safely bind Y.Doc update listener
-    // SAFEGUARD: The 'origin' parameter contains the WebSocket of the client who initiated the edit.
-    // By matching the origin, we broadcast changes only to OTHER clients in the room.
-    // This blocks echo effects, preventing infinite synchronization loop races.
-    doc.on('update', (update: Uint8Array, origin: any) => {
-      // 1. Queue the update for DB persistence
-      this.persistenceManager.appendUpdate(documentId, update).catch(err => {
-        logger.error(`Failed to queue update for doc ${documentId}`, { error: err });
+      // Load Y.Doc state using snapshot + updates
+      const doc = await this.documentManager.loadDocument(documentId);
+      const awareness = this.awarenessManager.getOrCreateAwareness(documentId, doc);
+      
+      const newRoom: Room = {
+        doc,
+        clients: new Set<WebSocket>(),
+        awareness,
+        documentId
+      };
+
+      // Safely bind Y.Doc update listener
+      // SAFEGUARD: The 'origin' parameter contains the WebSocket of the client who initiated the edit.
+      // By matching the origin, we broadcast changes only to OTHER clients in the room.
+      // This blocks echo effects, preventing infinite synchronization loop races.
+      doc.on('update', (update: Uint8Array, origin: any) => {
+        // 1. Queue the update for DB persistence
+        this.persistenceManager.appendUpdate(documentId, update).catch(err => {
+          logger.error(`Failed to queue update for doc ${documentId}`, { error: err });
+        });
+
+        // 2. Broadcast the update to other clients
+        this.broadcastUpdate(newRoom, update, origin);
       });
 
-      // 2. Broadcast the update to other clients
-      this.broadcastUpdate(room!, update, origin);
-    });
+      // Handle awareness change broadcasts
+      awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
+        const changedClients = added.concat(updated).concat(removed);
+        const message = this.awarenessManager.encodeAwarenessUpdate(awareness, changedClients);
+        
+        // Broadcast to everyone in the room
+        this.broadcastMessage(newRoom, message);
+      });
 
-    // Handle awareness change broadcasts
-    awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
-      const changedClients = added.concat(updated).concat(removed);
-      const message = this.awarenessManager.encodeAwarenessUpdate(awareness, changedClients);
-      
-      // Broadcast to everyone in the room
-      this.broadcastMessage(room!, message);
-    });
+      this.rooms.set(documentId, newRoom);
+      this.pendingRooms.delete(documentId);
+      return newRoom;
+    })();
 
-    this.rooms.set(documentId, room);
-    return room;
+    this.pendingRooms.set(documentId, promise);
+    return promise;
   }
 
   /**
@@ -93,6 +103,23 @@ export class RoomManager {
   async handleClientJoin(documentId: string, socket: WebSocket, workspaceId: string): Promise<Room> {
     const room = await this.getOrCreateRoom(documentId);
     room.clients.add(socket);
+
+    // AUTO-DISCOVERY: If document is from Obsidian and doesn't exist in DB document list, register it
+    // This ensures Obsidian notes appear in the web sidebar automatically.
+    if (documentId.startsWith('obs-')) {
+      try {
+        const exists = await this.documentManager.exists(documentId);
+        if (!exists) {
+          logger.info(`Auto-registering discovered Obsidian document: ${documentId}`);
+          // Extract a readable title from the ID (ID format: obs-hash-Title)
+          const parts = documentId.split('-');
+          const title = parts.length > 2 ? parts.slice(2).join('-') : 'Obsidian Note';
+          await this.documentManager.createDocument(documentId, workspaceId, title);
+        }
+      } catch (err) {
+        logger.error(`Failed to auto-register Obsidian document ${documentId}`, { error: err });
+      }
+    }
 
     activeConnections.inc({ workspace_id: workspaceId });
     logger.info(`Client joined room ${documentId}. Total clients: ${room.clients.size}`);

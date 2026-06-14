@@ -327,7 +327,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
 
   async getUpdates(documentId: string): Promise<Uint8Array[]> {
     const stmt = this.db.prepare(
-      `SELECT update_data FROM document_updates WHERE document_id = ? ORDER BY created_at ASC`
+      `SELECT update_data FROM document_updates WHERE document_id = ? ORDER BY rowid ASC`
     );
     const rows = stmt.all(documentId) as Array<{ update_data: Buffer }>;
     return rows.map(r => new Uint8Array(r.update_data));

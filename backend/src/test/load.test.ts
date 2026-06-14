@@ -74,9 +74,18 @@ describe('Collaborative Sync Platform - Load & Stress Tests', () => {
   });
 
   afterAll(async () => {
+    // Terminate all open clients first so they close and run their close/leave handlers
+    if (wss) {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+    }
+    // Wait 500ms for all leave handlers to complete their DB writes
+    await new Promise<void>(resolve => setTimeout(resolve, 500));
+
     await persistenceManager.forceShutdown();
     await db.close();
-    wss.close();
+    if (wss) wss.close();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

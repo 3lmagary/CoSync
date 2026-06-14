@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
+import * as Y from 'yjs';
 
 // Config env loading
 dotenv.config();
@@ -77,7 +78,8 @@ const connectionManager = new ConnectionManager(wss, roomManager, auditLogServic
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 3. REST HTTP API Routes
 
@@ -334,7 +336,7 @@ app.post('/api/workspaces/join/:token', authMiddleware, async (req: Authenticate
 
 // Document REST endpoints
 app.post('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: AuthenticatedRequest, res) => {
-  const { title } = req.body;
+  const { title, initialContent } = req.body;
   const { workspaceId } = req.params;
   const userId = req.user!.userId;
 
@@ -355,6 +357,13 @@ app.post('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: A
 
     const documentId = 'doc-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     const doc = await dbProvider.createDocument(documentId, workspaceId, title);
+
+    if (initialContent) {
+      const ydoc = new Y.Doc();
+      ydoc.getText('codemirror').insert(0, initialContent);
+      const updateData = Y.encodeStateAsUpdate(ydoc);
+      await dbProvider.saveUpdate(documentId, Buffer.from(updateData));
+    }
 
     await auditLogService.log('create_document', { userId, workspaceId, documentId, ipAddress: req.ip });
     res.status(201).json(doc);

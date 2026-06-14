@@ -5,12 +5,12 @@
   "description": "Real-time collaborative synchronization plugin for Obsidian using Yjs and WebSockets",
   "main": "main.js",
   "scripts": {
-    "build": "tsc && ../node_modules/.bin/esbuild main.ts --bundle --outfile=main.js --platform=node --external:obsidian",
+    "build": "tsc && ../node_modules/.bin/esbuild main.ts --bundle --outfile=main.js --platform=browser --format=cjs --external:obsidian --external:@codemirror/state --external:@codemirror/view && mkdir -p /mnt/workspace/vault/.obsidian/plugins/cosync-collaborative && cp main.js manifest.json styles.css /mnt/workspace/vault/.obsidian/plugins/cosync-collaborative/",
     "watch": "tsc -w"
   },
   "dependencies": {
-    "@codemirror/state": "^6.4.1",
-    "@codemirror/view": "^6.26.3",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.43.1",
     "y-codemirror.next": "^0.3.2",
     "y-websocket": "^2.0.3",
     "yjs": "^13.6.15"

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Auth } from './components/Auth';
 import { WorkspaceSelector } from './components/WorkspaceSelector';
 import { Editor } from './components/Editor';
+import { Menu } from 'lucide-react';
 
 interface User {
   id: string;
@@ -15,7 +16,20 @@ interface SelectedDoc {
   title: string;
 }
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const getBackendUrl = () => {
+  const envUrl = import.meta.env.VITE_BACKEND_URL;
+  if (envUrl) return envUrl;
+  
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `http://${hostname}:4000`;
+    }
+  }
+  return 'http://localhost:4000';
+};
+
+const BACKEND_URL = getBackendUrl();
 
 const App: React.FC = () => {
   const [token, setToken] = useState<string | null>(null);
@@ -27,6 +41,8 @@ const App: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('cosync_theme') as 'dark' | 'light') || 'dark';
   });
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
 
   // Sidebar width support
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -191,27 +207,33 @@ const App: React.FC = () => {
         </>
       ) : (
         <div style={{ display: 'flex', flex: 1, height: '100vh', overflow: 'hidden' }}>
-          <WorkspaceSelector
-            key={workspaceRefreshKey}
-            token={token}
-            backendUrl={BACKEND_URL}
-            username={user.username}
-            onLogout={handleLogout}
-            onSelectDocument={(workspaceId, documentId, title) => 
-              setSelectedDoc({ workspaceId, documentId, title })
-            }
-            selectedDocumentId={selectedDoc?.documentId || null}
-            width={sidebarWidth}
-            theme={theme}
-            onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-          />
-          
-          {/* Draggable Divider */}
-          <div onMouseDown={startResizing} className="sidebar-resize-handle" />
+          {isSidebarOpen && (
+            <>
+              <WorkspaceSelector
+                key={workspaceRefreshKey}
+                token={token}
+                backendUrl={BACKEND_URL}
+                username={user.username}
+                onLogout={handleLogout}
+                onSelectDocument={(workspaceId, documentId, title) => 
+                  setSelectedDoc({ workspaceId, documentId, title })
+                }
+                selectedDocumentId={selectedDoc?.documentId || null}
+                width={sidebarWidth}
+                theme={theme}
+                onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+                onCollapse={() => setIsSidebarOpen(false)}
+              />
+              
+              {/* Draggable Divider */}
+              <div onMouseDown={startResizing} className="sidebar-resize-handle" />
+            </>
+          )}
 
           <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflowY: 'auto', position: 'relative' }}>
             {selectedDoc ? (
               <Editor
+                key={selectedDoc.documentId}
                 token={token}
                 workspaceId={selectedDoc.workspaceId}
                 documentId={selectedDoc.documentId}
@@ -219,9 +241,30 @@ const App: React.FC = () => {
                 backendUrl={BACKEND_URL}
                 user={user}
                 onBack={() => setSelectedDoc(null)}
+                isSidebarOpen={isSidebarOpen}
+                onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
               />
             ) : (
-              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '1rem', padding: '2rem', textAlign: 'center' }}>
+              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '1rem', padding: '2rem', textAlign: 'center', position: 'relative' }}>
+                {!isSidebarOpen && (
+                  <button
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="btn-secondary"
+                    style={{
+                      position: 'absolute',
+                      top: '1.5rem',
+                      left: '1.5rem',
+                      padding: '0.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer'
+                    }}
+                    title="Show Sidebar"
+                  >
+                    <Menu size={20} />
+                  </button>
+                )}
                 <span style={{ fontSize: '4.5rem', filter: 'drop-shadow(0 10px 15px rgba(99,102,241,0.25))' }}>✍️</span>
                 <h2 style={{ color: 'var(--text-color)', fontWeight: 800, fontSize: '1.75rem', margin: 0 }}>Welcome to CoSync</h2>
                 <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, fontSize: '1rem', lineHeight: '1.6' }}>Select a document from the left sidebar or create a new workspace to start collaborating in real-time.</p>

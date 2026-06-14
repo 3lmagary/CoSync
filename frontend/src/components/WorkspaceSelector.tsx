@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { 
   FolderPlus, File, Edit2, Trash2, Share2, LogOut, FolderOpen,
-  ChevronRight, ChevronDown, Folder, Sun, Moon, Copy, Check, Plus, Key
+  ChevronRight, ChevronDown, Folder, Sun, Moon, Copy, Check, Plus, Key, RotateCw, ChevronLeft
 } from 'lucide-react';
 
 interface Workspace {
@@ -15,6 +16,43 @@ interface Document {
   title: string;
 }
 
+interface TreeNode {
+  name: string;
+  path: string;
+  isFolder: boolean;
+  doc?: Document;
+  children: Record<string, TreeNode>;
+}
+
+function buildDocTree(docs: Document[]): TreeNode {
+  const root: TreeNode = { name: 'root', path: '', isFolder: true, children: {} };
+
+  for (const doc of docs) {
+    const parts = doc.title.split('/');
+    let current = root;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLast = i === parts.length - 1;
+      const currentPath = current.path ? `${current.path}/${part}` : part;
+
+      if (!current.children[part]) {
+        current.children[part] = {
+          name: part,
+          path: currentPath,
+          isFolder: !isLast,
+          doc: isLast ? doc : undefined,
+          children: {}
+        };
+      }
+
+      current = current.children[part];
+    }
+  }
+
+  return root;
+}
+
 interface WorkspaceSelectorProps {
   token: string;
   backendUrl: string;
@@ -25,6 +63,7 @@ interface WorkspaceSelectorProps {
   width: number;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  onCollapse?: () => void;
 }
 
 interface CustomDialogState {
@@ -44,7 +83,8 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
   selectedDocumentId,
   width,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  onCollapse
 }) => {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceDocs, setWorkspaceDocs] = useState<Record<string, Document[]>>({});
@@ -66,6 +106,14 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
 
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameDocValue, setRenameDocValue] = useState('');
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  
+  // Connect Obsidian Modal states
+  const [showObsidianModal, setShowObsidianModal] = useState(false);
+  const [selectedWorkspaceForObsidian, setSelectedWorkspaceForObsidian] = useState<string>('create-new');
+  const [copiedObsidianCode, setCopiedObsidianCode] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
   // Share Modal state
   const [shareModal, setShareModal] = useState<{
@@ -104,6 +152,17 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       );
       if (wsId) {
         setExpandedWorkspaces(prev => ({ ...prev, [wsId]: true }));
+        const doc = workspaceDocs[wsId]?.find(d => d.id === selectedDocumentId);
+        if (doc && doc.title.includes('/')) {
+          const parts = doc.title.split('/');
+          const newExpanded: Record<string, boolean> = {};
+          let currentPath = '';
+          for (let i = 0; i < parts.length - 1; i++) {
+            currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+            newExpanded[currentPath] = true;
+          }
+          setExpandedFolders(prev => ({ ...prev, ...newExpanded }));
+        }
       }
     }
   }, [selectedDocumentId, workspaceDocs]);
@@ -113,6 +172,10 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       const res = await fetch(`${backendUrl}/api/workspaces`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
       if (!res.ok) throw new Error('Failed to load workspaces');
       const data = await res.json();
       setWorkspaces(data);
@@ -236,6 +299,8 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       if (!res.ok) throw new Error('Failed to generate invite token');
       const data = await res.json();
       
+      setShareSuccess(null);
+      setShareError(null);
       setShareModal({
         isOpen: true,
         workspaceId,
@@ -329,6 +394,139 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
     setRenamingDocId(null);
   };
 
+  const renderTreeNode = (node: TreeNode, depth: number, wsId: string): React.ReactNode => {
+    const sortedKeys = Object.keys(node.children).sort((a, b) => {
+      const na = node.children[a];
+      const nb = node.children[b];
+      if (na.isFolder && !nb.isFolder) return -1;
+      if (!na.isFolder && nb.isFolder) return 1;
+      return a.localeCompare(b);
+    });
+
+    return (
+      <div key={node.path} style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+        {node.name !== 'root' && (
+          node.isFolder ? (
+            <div 
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedFolders(prev => ({ ...prev, [node.path]: !prev[node.path] }));
+              }}
+              className="workspace-item"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                gap: '0.35rem',
+                padding: '0.35rem 0.5rem',
+                fontSize: '0.83rem',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                marginLeft: `${depth * 0.5}rem`,
+                background: 'transparent',
+                transition: 'background 0.2s',
+              }}
+            >
+              {expandedFolders[node.path] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <Folder size={13} color="#f59e0b" style={{ flexShrink: 0 }} />
+              <span 
+                dir="auto"
+                style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'start' }}
+              >
+                {node.name}
+              </span>
+            </div>
+          ) : (
+            node.doc && (
+              <div
+                onClick={() => onSelectDocument(wsId, node.doc!.id, node.doc!.title)}
+                className={`document-item ${selectedDocumentId === node.doc.id ? 'active' : ''}`}
+                style={{ 
+                  padding: '0.4rem 0.5rem', 
+                  fontSize: '0.83rem', 
+                  borderRadius: '6px',
+                  marginLeft: `${depth * 0.5 + 0.9}rem`
+                }}
+              >
+                {renamingDocId === node.doc.id ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%' }} onClick={e => e.stopPropagation()}>
+                    <File size={13} color="var(--active-text)" style={{ flexShrink: 0 }} />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renameDocValue}
+                      onChange={e => setRenameDocValue(e.target.value)}
+                      onBlur={() => handleCommitRenameDocument(wsId, node.doc!.id)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleCommitRenameDocument(wsId, node.doc!.id);
+                        else if (e.key === 'Escape') setRenamingDocId(null);
+                      }}
+                      className="input-field"
+                      style={{ padding: '2px 6px', fontSize: '0.8rem', width: '100%', height: '20px', border: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.1)', color: 'var(--text-color)' }}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', overflow: 'hidden', flex: 1 }}>
+                      <File size={13} color={selectedDocumentId === node.doc.id ? 'var(--active-text)' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
+                      <span 
+                        dir="auto"
+                        style={{ 
+                          whiteSpace: 'nowrap', 
+                          overflow: 'hidden', 
+                          textOverflow: 'ellipsis',
+                          color: selectedDocumentId === node.doc.id ? 'var(--active-text)' : 'var(--text-color)',
+                          textAlign: 'start'
+                        }}
+                      >
+                        {node.name}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.15rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingDocId(node.doc!.id);
+                          setRenameDocValue(node.doc!.title);
+                        }}
+                        title="Rename Document"
+                        className="action-btn rename"
+                        style={{ padding: '2px' }}
+                      >
+                        <Edit2 size={11} />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showCustomConfirm('Delete Document', `Are you sure you want to delete "${node.doc!.title}"? This action cannot be undone.`, () => {
+                            handleDeleteDocument(wsId, node.doc!.id);
+                          });
+                        }}
+                        title="Delete Document"
+                        className="action-btn delete"
+                        style={{ padding: '2px' }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          )
+        )}
+        
+        {(node.name === 'root' || expandedFolders[node.path]) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+            {sortedKeys.map(key => renderTreeNode(node.children[key], node.name === 'root' ? 0 : depth + 1, wsId))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div 
       className="sidebar-container" 
@@ -356,14 +554,34 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
             <span>✍️</span>
             <span>CoSync</span>
           </div>
-          <button 
-            onClick={onToggleTheme} 
-            className="action-btn rename" 
-            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            style={{ padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)' }}
-          >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
+          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+            <button 
+              onClick={fetchWorkspaces} 
+              className="action-btn rename" 
+              title="Refresh Workspaces & Notes"
+              style={{ padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <RotateCw size={15} />
+            </button>
+            <button 
+              onClick={onToggleTheme} 
+              className="action-btn rename" 
+              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              style={{ padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
+            {onCollapse && (
+              <button 
+                onClick={onCollapse} 
+                className="action-btn rename" 
+                title="Collapse Sidebar"
+                style={{ padding: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <ChevronLeft size={15} />
+              </button>
+            )}
+          </div>
         </div>
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--item-bg)', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border-muted)' }}>
@@ -372,12 +590,9 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
           </span>
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
             <button 
-              onClick={() => {
-                navigator.clipboard.writeText(token);
-                alert('Obsidian sync token copied to clipboard!');
-              }} 
+              onClick={() => setShowObsidianModal(true)} 
               className="action-btn rename" 
-              title="Copy Obsidian Sync Token" 
+              title="Connect Obsidian Vault" 
               style={{ padding: '4px' }}
             >
               <Key size={13} />
@@ -486,13 +701,17 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', overflow: 'hidden', flex: 1 }}>
                         {isExpanded ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
                         {isExpanded ? <FolderOpen size={14} color="#818cf8" style={{ flexShrink: 0 }} /> : <Folder size={14} color="#9ca3af" style={{ flexShrink: 0 }} />}
-                        <span style={{ 
-                          whiteSpace: 'nowrap', 
-                          overflow: 'hidden', 
-                          textOverflow: 'ellipsis',
-                          fontWeight: 600,
-                          color: 'var(--text-color)'
-                        }}>
+                        <span 
+                          dir="auto"
+                          style={{ 
+                            whiteSpace: 'nowrap', 
+                            overflow: 'hidden', 
+                            textOverflow: 'ellipsis',
+                            fontWeight: 600,
+                            color: 'var(--text-color)',
+                            textAlign: 'start'
+                          }}
+                        >
                           {ws.name}
                         </span>
                       </div>
@@ -544,75 +763,10 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                 {isExpanded && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', paddingLeft: '1.1rem', borderLeft: '1px dashed var(--border-color)', marginLeft: '0.75rem', marginTop: '0.1rem' }}>
                     
-                    {docs.map(doc => (
-                      <div
-                        key={doc.id}
-                        onClick={() => onSelectDocument(ws.id, doc.id, doc.title)}
-                        className={`document-item ${selectedDocumentId === doc.id ? 'active' : ''}`}
-                        style={{ padding: '0.4rem 0.5rem', fontSize: '0.83rem', borderRadius: '6px' }}
-                      >
-                        {renamingDocId === doc.id ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%' }} onClick={e => e.stopPropagation()}>
-                            <File size={13} color="var(--active-text)" style={{ flexShrink: 0 }} />
-                            <input
-                              type="text"
-                              autoFocus
-                              value={renameDocValue}
-                              onChange={e => setRenameDocValue(e.target.value)}
-                              onBlur={() => handleCommitRenameDocument(ws.id, doc.id)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') handleCommitRenameDocument(ws.id, doc.id);
-                                else if (e.key === 'Escape') setRenamingDocId(null);
-                              }}
-                              className="input-field"
-                              style={{ padding: '2px 6px', fontSize: '0.8rem', width: '100%', height: '20px', border: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.1)', color: 'var(--text-color)' }}
-                            />
-                          </div>
-                        ) : (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', overflow: 'hidden', flex: 1 }}>
-                              <File size={13} color={selectedDocumentId === doc.id ? 'var(--active-text)' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
-                              <span style={{ 
-                                whiteSpace: 'nowrap', 
-                                overflow: 'hidden', 
-                                textOverflow: 'ellipsis',
-                                color: selectedDocumentId === doc.id ? 'var(--active-text)' : 'var(--text-color)'
-                              }}>
-                                {doc.title}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.15rem', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRenamingDocId(doc.id);
-                                  setRenameDocValue(doc.title);
-                                }}
-                                title="Rename Document"
-                                className="action-btn rename"
-                                style={{ padding: '2px' }}
-                              >
-                                <Edit2 size={11} />
-                              </button>
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  showCustomConfirm('Delete Document', `Are you sure you want to delete "${doc.title}"? This action cannot be undone.`, () => {
-                                    handleDeleteDocument(ws.id, doc.id);
-                                  });
-                                }}
-                                title="Delete Document"
-                                className="action-btn delete"
-                                style={{ padding: '2px' }}
-                              >
-                                <Trash2 size={11} />
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
+                    {(() => {
+                      const tree = buildDocTree(docs);
+                      return renderTreeNode(tree, 0, ws.id);
+                    })()}
 
                     {/* Inline Document Creation Input */}
                     {creatingDocInWorkspaceId === ws.id && (
@@ -651,7 +805,7 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
       </div>
 
       {/* Custom Dialog Overlay (Only for delete confirmations) */}
-      {dialog && dialog.isOpen && (
+      {dialog && dialog.isOpen && ReactDOM.createPortal(
         <div className="share-modal-overlay" onClick={() => setDialog(null)}>
           <div className="share-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
             <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>{dialog.title}</h3>
@@ -678,12 +832,13 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Share Workspace Modal Dialog */}
-      {shareModal && shareModal.isOpen && (
-        <div className="share-modal-overlay" onClick={() => setShareModal(null)}>
+      {shareModal && shareModal.isOpen && ReactDOM.createPortal(
+        <div className="share-modal-overlay" onClick={() => { setShareModal(null); setShareSuccess(null); setShareError(null); }}>
           <div className="share-modal" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Invite to {shareModal.workspaceName}</h3>
             <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--active-text)', fontFamily: 'monospace', wordBreak: 'break-all' }}>
@@ -736,6 +891,8 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                 <button 
                   onClick={async () => {
                     if (!shareModal.usernameToShare.trim()) return;
+                    setShareSuccess(null);
+                    setShareError(null);
                     try {
                       const res = await fetch(`${backendUrl}/api/workspaces/${shareModal.workspaceId}/share`, {
                         method: 'POST',
@@ -747,10 +904,10 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                       });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || 'Failed to share');
-                      alert(`Successfully shared workspace with ${shareModal.usernameToShare}`);
+                      setShareSuccess(`Successfully shared workspace with ${shareModal.usernameToShare}`);
                       setShareModal(prev => prev ? { ...prev, usernameToShare: '' } : null);
                     } catch (err: any) {
-                      alert(err.message);
+                      setShareError(err.message);
                     }
                   }}
                   className="btn-secondary"
@@ -759,15 +916,115 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
                   Send
                 </button>
               </div>
+              {shareSuccess && (
+                <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: '0.25rem', fontWeight: 600 }}>
+                  {shareSuccess}
+                </div>
+              )}
+              {shareError && (
+                <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: '0.25rem', fontWeight: 600 }}>
+                  {shareError}
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-              <button onClick={() => setShareModal(null)} className="btn-secondary" style={{ padding: '0.5rem 1.25rem' }}>
+              <button 
+                onClick={() => {
+                  setShareModal(null);
+                  setShareSuccess(null);
+                  setShareError(null);
+                }} 
+                className="btn-secondary" 
+                style={{ padding: '0.5rem 1.25rem' }}
+              >
                 Close
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {showObsidianModal && ReactDOM.createPortal(
+        <div className="share-modal-overlay" onClick={() => setShowObsidianModal(false)}>
+          <div className="share-modal" onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>🔌</span>
+              <span>Connect Obsidian Vault</span>
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+              Link your Obsidian vault directly to CoSync. You can choose to sync to an existing workspace or automatically create a new one named after your vault.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Target Workspace</label>
+              <select
+                value={selectedWorkspaceForObsidian}
+                onChange={e => {
+                  setSelectedWorkspaceForObsidian(e.target.value);
+                  setCopiedObsidianCode(false);
+                }}
+                className="input-field"
+                style={{ width: '100%', padding: '0.5rem', background: 'var(--item-bg)', color: 'var(--text-color)', border: '1px solid var(--border-color)', borderRadius: '6px' }}
+              >
+                <option value="create-new">🆕 Create new workspace named after vault (Recommended)</option>
+                {workspaces.map(ws => (
+                  <option key={ws.id} value={ws.id}>📁 {ws.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Connection Code</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input 
+                  type="text" 
+                  readOnly 
+                  value={btoa(JSON.stringify({
+                    serverUrl: backendUrl,
+                    token: token,
+                    workspaceId: selectedWorkspaceForObsidian
+                  }))}
+                  className="input-field"
+                  style={{ flex: 1, fontSize: '0.85rem', padding: '0.5rem 0.75rem' }}
+                  onClick={e => (e.target as HTMLInputElement).select()}
+                />
+                <button 
+                  onClick={() => {
+                    const code = btoa(JSON.stringify({
+                      serverUrl: backendUrl,
+                      token: token,
+                      workspaceId: selectedWorkspaceForObsidian
+                    }));
+                    navigator.clipboard.writeText(code);
+                    setCopiedObsidianCode(true);
+                    setTimeout(() => setCopiedObsidianCode(false), 2000);
+                  }}
+                  className="btn-primary"
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                >
+                  {copiedObsidianCode ? <Check size={16} /> : <Copy size={16} />}
+                  <span>{copiedObsidianCode ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+              <button 
+                onClick={() => {
+                  setShowObsidianModal(false);
+                  setCopiedObsidianCode(false);
+                }} 
+                className="btn-secondary" 
+                style={{ padding: '0.5rem 1.25rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

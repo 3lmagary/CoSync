@@ -34,6 +34,8 @@ export class ConnectionManager {
    */
   async handleUpgrade(req: IncomingMessage, socket: any, head: Buffer): Promise<void> {
     const ip = req.socket.remoteAddress || 'unknown-ip';
+    const url = req.url || '';
+    logger.info(`Incoming WebSocket upgrade request from ${ip} for URL: ${url}`);
 
     // 1. IP rate limiting block
     if (FeatureFlagService.isEnabled('ENABLE_RATE_LIMIT') && this.isIpThrottled(ip)) {
@@ -77,7 +79,6 @@ export class ConnectionManager {
 
     // 3. Parse and validate Workspace/Document path
     // Format expected: /workspace/{workspaceId}/doc/{documentId}
-    const url = req.url || '';
     const normalizedUrl = url.replace(/\/+/g, '/');
     const match = normalizedUrl.match(/^\/workspace\/([^/]+)\/doc\/([^/]+)$/);
     if (!match) {

@@ -74,9 +74,18 @@ describe('Collaborative Sync Platform - Chaos & Network Loss Tests', () => {
   });
 
   afterAll(async () => {
+    // Terminate all open clients first so they close and run their close/leave handlers
+    if (wss) {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+    }
+    // Wait 500ms for all leave handlers to complete their DB writes
+    await new Promise<void>(resolve => setTimeout(resolve, 500));
+
     await persistenceManager.forceShutdown();
     await db.close();
-    wss.close();
+    if (wss) wss.close();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
@@ -97,11 +106,13 @@ describe('Collaborative Sync Platform - Chaos & Network Loss Tests', () => {
     ws.send = function (data: any, cb?: any) {
       // Simulate packet loss (dropping message completely)
       if (Math.random() < options.lossRate) {
+        console.log('Chaos wrapper DROPPED packet!');
         return;
       }
       // Simulate network latency (delayed delivery)
       setTimeout(() => {
         if (ws.readyState === WebSocket.OPEN) {
+          console.log('Chaos wrapper SENT packet');
           originalSend.call(ws, data, cb);
         }
       }, options.latencyMs);
@@ -138,23 +149,29 @@ describe('Collaborative Sync Platform - Chaos & Network Loss Tests', () => {
     // Wait for latency timers to settle
     await new Promise<void>(resolve => setTimeout(resolve, 3000));
 
-    expect(docA.getText('codemirror').toString()).toBe(docB.getText('codemirror').toString());
-    expect(docA.getText('codemirror').toString()).toContain('Delayed');
-    expect(docA.getText('codemirror').toString()).toContain('Convergence');
-
-    providerA.destroy();
-    providerB.destroy();
+    try {
+      expect(docA.getText('codemirror').toString()).toBe(docB.getText('codemirror').toString());
+      expect(docA.getText('codemirror').toString()).toContain('Delayed');
+      expect(docA.getText('codemirror').toString()).toContain('Convergence');
+    } finally {
+      providerA.destroy();
+      providerB.destroy();
+    }
   }, 12000);
 
   it('2. Packet loss simulation (20%) recovers and converges document state', async () => {
     const docA = new Y.Doc();
     const docB = new Y.Doc();
 
-    docA.on('update', (update) => {
-      console.log('docA update! Length:', docA.getText('codemirror').toString().length, 'Content:', docA.getText('codemirror').toString());
+    console.log('--- CLIENT IDs ---');
+    console.log('docA.clientID:', docA.clientID);
+    console.log('docB.clientID:', docB.clientID);
+
+    docA.on('update', (update, origin) => {
+      console.log('docA update! Size:', update.byteLength, 'Origin:', origin ? 'WebsocketProvider' : 'Local', 'Length:', docA.getText('codemirror').toString().length, 'Content:', docA.getText('codemirror').toString());
     });
-    docB.on('update', (update) => {
-      console.log('docB update! Length:', docB.getText('codemirror').toString().length, 'Content:', docB.getText('codemirror').toString());
+    docB.on('update', (update, origin) => {
+      console.log('docB update! Size:', update.byteLength, 'Origin:', origin ? 'WebsocketProvider' : 'Local', 'Length:', docB.getText('codemirror').toString().length, 'Content:', docB.getText('codemirror').toString());
     });
 
     const providerA = new WebsocketProvider(`ws://localhost:${TEST_PORT}`, '/workspace/ws1/doc/doc-loss', docA, {
@@ -187,17 +204,33 @@ describe('Collaborative Sync Platform - Chaos & Network Loss Tests', () => {
     console.log('docA:', docA.getText('codemirror').toString());
     console.log('docB:', docB.getText('codemirror').toString());
 
+    // Wait for in-flight packets to settle before disconnecting
+    await new Promise<void>(resolve => setTimeout(resolve, 500));
+
     // Force reconnect to trigger full sync step vector exchange (recovering dropped updates)
+    const disconnectPromises = [
+      new Promise<void>((resolve) => {
+        if (!providerA.wsconnected) resolve();
+        else providerA.on('status', ({ status }) => { if (status === 'disconnected') resolve(); });
+      }),
+      new Promise<void>((resolve) => {
+        if (!providerB.wsconnected) resolve();
+        else providerB.on('status', ({ status }) => { if (status === 'disconnected') resolve(); });
+      })
+    ];
+
     providerA.disconnect();
     providerB.disconnect();
 
-    await new Promise<void>(resolve => setTimeout(resolve, 300));
+    await Promise.all(disconnectPromises);
+    await new Promise<void>(resolve => setTimeout(resolve, 100));
 
     console.log('--- BEFORE RECONNECT ---');
     console.log('docA:', docA.getText('codemirror').toString());
     console.log('docB:', docB.getText('codemirror').toString());
 
     // Connect and wait for full sync vector handshake
+    console.log('--- CALLING RECONNECT ---');
     providerA.connect();
     providerB.connect();
 
@@ -212,10 +245,12 @@ describe('Collaborative Sync Platform - Chaos & Network Loss Tests', () => {
     console.log('docA:', docA.getText('codemirror').toString());
     console.log('docB:', docB.getText('codemirror').toString());
 
-    expect(docA.getText('codemirror').toString()).toBe(docB.getText('codemirror').toString());
-
-    providerA.destroy();
-    providerB.destroy();
+    try {
+      expect(docA.getText('codemirror').toString()).toBe(docB.getText('codemirror').toString());
+    } finally {
+      providerA.destroy();
+      providerB.destroy();
+    }
   }, 15000);
 
   it('3. Chaos test: multi-user random connect / disconnect cycles maintain consistency', async () => {
