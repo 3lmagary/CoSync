@@ -618,11 +618,13 @@ class CoSyncPlugin extends Plugin {
   private async syncYDocToLocalFile() {
     if (!this.activeFile || !this.ydoc) return;
 
-    // SAFEGUARD: If editor has focus, CodeMirror's yCollab handles sync in-memory.
-    // Writing to disk now conflicts with user input and triggers file reload flickers.
+    // SAFEGUARD: If editor is open in Editing Mode (Source/Live Preview), CodeMirror's yCollab handles sync in-memory.
+    // Writing to disk now conflicts with user input and triggers Obsidian's native external modification watcher
+    // ("File modified externally, merging automatically..."), which resets selection and ruins the text.
+    // We only write to disk if the note is closed/background, or open in Reading Mode (preview).
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (activeView && activeView.file?.path === this.activeFile.path && activeView.editor?.hasFocus()) {
-      console.log('CoSync: Skipping disk write because active editor is focused.');
+    if (activeView && activeView.file?.path === this.activeFile.path && activeView.getMode() === 'source') {
+      console.log('CoSync: Skipping disk write because active editor is open in Editing Mode.');
       return;
     }
     

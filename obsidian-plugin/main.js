@@ -10815,8 +10815,8 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
   async syncYDocToLocalFile() {
     if (!this.activeFile || !this.ydoc) return;
     const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
-    if (activeView && activeView.file?.path === this.activeFile.path && activeView.editor?.hasFocus()) {
-      console.log("CoSync: Skipping disk write because active editor is focused.");
+    if (activeView && activeView.file?.path === this.activeFile.path && activeView.getMode() === "source") {
+      console.log("CoSync: Skipping disk write because active editor is open in Editing Mode.");
       return;
     }
     const yContent = this.ydoc.getText("codemirror").toString();
