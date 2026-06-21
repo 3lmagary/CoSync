@@ -85,11 +85,10 @@ export class HybridSyncManager {
       // Skip if local update or from bridge
       if (transaction.local || transaction.origin === 'bridge-to-text') return;
 
-      // If yxml was changed recently (within 500ms), it means this ytext update
-      // is likely just the bridge from another browser syncing its local changes,
-      // so we IGNORE IT to prevent a feedback loop and let TipTap's native sync handle it.
-      if (Date.now() - this.lastXmlChangeTime < 500) {
-        console.log("[HybridSyncManager]: Ignoring ytext change because yxml changed recently (browser origin).");
+      // If yxml was changed recently (within 1000ms), it means the user is actively typing in the browser.
+      // We ignore the update to prevent disrupting the user's active typing session and let browser typing take priority.
+      if (Date.now() - this.lastXmlChangeTime < 1000) {
+        console.log("[HybridSyncManager]: Ignoring ytext change because browser has active local edits.");
         return;
       }
 
@@ -97,8 +96,8 @@ export class HybridSyncManager {
 
       const now = Date.now();
       const timeSinceLast = now - this.lastTextToXmlTime;
-      // 100ms if editor is not focused (fast update for reading), 400ms if focused (less intrusive for writing)
-      const throttleDelay = this.editor.isFocused ? 400 : 100;
+      // Use a constant 100ms throttle for ultra-responsive updates in all states (focused/unfocused)
+      const throttleDelay = 100;
 
       if (this.textToXmlTimeout) clearTimeout(this.textToXmlTimeout);
 
@@ -171,9 +170,8 @@ export class HybridSyncManager {
         return str
           .replace(/\r\n/g, '\n')
           .replace(/\r/g, '\n')
-          .replace(/^\s+/, '')
-          .replace(/\s+$/, '')
-          .replace(/\n{2,}/g, '\n\n');
+          .replace(/\s+/g, ' ') // Collapse all consecutive whitespaces/newlines to a single space
+          .trim();
       };
 
       const currentHtml = this.editor.getHTML();

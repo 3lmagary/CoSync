@@ -563,16 +563,28 @@ class CoSyncPlugin extends Plugin {
 
     // Sync local cursor movements to Yjs awareness relative positions
     const cursorListener = EditorView.updateListener.of((update) => {
-      if (update.selectionSet && this.wsProvider && this.activeDocumentId) {
+      if (!this.wsProvider || !this.activeDocumentId) return;
+
+      const hasFocus = update.view.hasFocus;
+      if (hasFocus) {
+        if (update.selectionSet || update.focusChanged) {
+          try {
+            const head = update.state.selection.main.head;
+            const relativePos = Y.createRelativePositionFromTypeIndex(ytext, head);
+            this.wsProvider.awareness.setLocalStateField('cursor', {
+              anchor: relativePos,
+              head: relativePos
+            });
+          } catch (err) {
+            console.warn('CoSync: Error updating cursor awareness:', err);
+          }
+        }
+      } else if (update.focusChanged) {
+        // Just lost focus, clear local cursor representation from the provider
         try {
-          const head = update.state.selection.main.head;
-          const relativePos = Y.createRelativePositionFromTypeIndex(ytext, head);
-          this.wsProvider.awareness.setLocalStateField('cursor', {
-            anchor: relativePos,
-            head: relativePos
-          });
+          this.wsProvider.awareness.setLocalStateField('cursor', null);
         } catch (err) {
-          console.warn('CoSync: Error updating cursor awareness:', err);
+          console.warn('CoSync: Error clearing cursor awareness:', err);
         }
       }
     });
