@@ -26,6 +26,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    labels:
+      - "autoexposer.enable=true"
+      - "autoexposer.name=CoSync API"
+      - "autoexposer.group=Sync & Backup"
+      - "autoexposer.icon=✍️"
+      - "autoexposer.port=4000"
+      - "autoexposer.subdomain=cosync-api"
 
   frontend:
     build:
@@ -40,6 +47,13 @@ services:
       backend:
         condition: service_healthy
     restart: always
+    labels:
+      - "autoexposer.enable=true"
+      - "autoexposer.name=CoSync Workspace"
+      - "autoexposer.group=Sync & Backup"
+      - "autoexposer.icon=✍️"
+      - "autoexposer.port=5173"
+      - "autoexposer.subdomain=cosync"
 
 volumes:
   sqlite-data:

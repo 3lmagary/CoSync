@@ -5,8 +5,7 @@
   "description": "Production-grade collaborative real-time sync platform for Browser and Obsidian",
   "workspaces": [
     "backend",
-    "frontend",
-    "obsidian-plugin"
+    "frontend"
   ],
   "scripts": {
     "install:all": "npm install",

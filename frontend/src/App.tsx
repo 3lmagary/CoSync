@@ -18,15 +18,24 @@ interface SelectedDoc {
 
 const getBackendUrl = () => {
   const envUrl = import.meta.env.VITE_BACKEND_URL;
-  if (envUrl) return envUrl;
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl;
+  }
   
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    
+    if (hostname && hostname.includes('cosync') && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      const apiHost = hostname.replace('cosync', 'cosync-api');
+      return `${protocol}//${apiHost}`;
+    }
+    
     if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `http://${hostname}:4000`;
+      return `${protocol}//${hostname}:4000`;
     }
   }
-  return 'http://localhost:4000';
+  return envUrl || 'http://localhost:4000';
 };
 
 const BACKEND_URL = getBackendUrl();
