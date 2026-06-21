@@ -18,6 +18,8 @@ export interface UserAwarenessState {
 export class AwarenessManager {
   // Mapping of document ID to its corresponding Awareness instance
   private docAwareness: Map<string, awarenessProtocol.Awareness> = new Map();
+  // Mapping of WebSocket socket to set of controlled client IDs
+  private connectionClients: Map<WebSocket, Set<number>> = new Map();
 
   /**
    * Gets or creates the Awareness instance for a document room.
@@ -30,6 +32,19 @@ export class AwarenessManager {
       awareness.on('change', () => {
         const activeCount = awareness.getStates().size;
         activeAwarenessUsers.set({ doc_id: documentId }, activeCount);
+      });
+
+      // Track controlled client IDs per WebSocket connection
+      awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
+        if (origin && origin instanceof WebSocket) {
+          let controlled = this.connectionClients.get(origin);
+          if (!controlled) {
+            controlled = new Set<number>();
+            this.connectionClients.set(origin, controlled);
+          }
+          added.forEach((id: number) => controlled!.add(id));
+          removed.forEach((id: number) => controlled!.delete(id));
+        }
       });
 
       this.docAwareness.set(documentId, awareness);
@@ -46,7 +61,9 @@ export class AwarenessManager {
     if (!awareness) return;
 
     try {
+      console.log("Applying awareness update on server...");
       awarenessProtocol.applyAwarenessUpdate(awareness, update, clientSocket);
+      console.log("Server awareness states size:", awareness.getStates().size, "Entries:", Array.from(awareness.getStates().entries()).map(([cid, val]: any) => ({ clientId: cid, hasUser: !!val.user, user: val.user })));
     } catch (error) {
       logger.error(`Failed to apply awareness update for doc ${documentId}`, { error });
     }
@@ -66,12 +83,20 @@ export class AwarenessManager {
   /**
    * Cleans up the awareness state for a client when they disconnect.
    */
-  handleDisconnect(documentId: string, clientSocket: WebSocket, clientId: number): void {
+  handleDisconnect(documentId: string, clientSocket: WebSocket): void {
     const awareness = this.docAwareness.get(documentId);
     if (!awareness) return;
 
-    logger.debug(`Cleaning up awareness state for client ${clientId} in doc ${documentId}`);
-    awarenessProtocol.removeAwarenessStates(awareness, [clientId], clientSocket);
+    const controlled = this.connectionClients.get(clientSocket);
+    if (controlled && controlled.size > 0) {
+      logger.info(`Cleaning up awareness states for clients: ${Array.from(controlled)} in doc ${documentId}`);
+      try {
+        awarenessProtocol.removeAwarenessStates(awareness, Array.from(controlled), clientSocket);
+      } catch (err) {
+        logger.error(`Error removing awareness states on disconnect for doc ${documentId}`, { error: err });
+      }
+      this.connectionClients.delete(clientSocket);
+    }
   }
 
   /**

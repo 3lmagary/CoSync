@@ -10615,17 +10615,22 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
     }
     return "obs-" + Math.abs(hash).toString(36) + "-" + file.basename.replace(/[^a-zA-Z0-9]/g, "");
   }
+  async reconnect() {
+    await this.disconnectActive();
+    this.activeFile = null;
+    await this.handleFileSwitch(true);
+  }
   /**
    * Binds the current active note to the server.
    */
-  async handleFileSwitch() {
+  async handleFileSwitch(force = false) {
     const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
     if (!activeView) {
       this.disconnectActive();
       return;
     }
     const file = activeView.file;
-    if (!file || this.activeFile && this.activeFile.path === file.path) {
+    if (!file || !force && this.activeFile && this.activeFile.path === file.path) {
       return;
     }
     await this.disconnectActive();
@@ -10641,7 +10646,7 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
     }
     this.activeDocumentId = documentId;
     const wsUrl = this.settings.serverUrl.replace(/^http/, "ws");
-    const roomName = `/workspace/${this.settings.workspaceId}/doc/${documentId}`;
+    const roomName = `workspace/${this.settings.workspaceId}/doc/${documentId}`;
     console.log(`Connecting to collaborative room: ${roomName}`);
     this.ydoc = new Doc();
     this.wsProvider = new WebsocketProvider(wsUrl, roomName, this.ydoc, {
@@ -10660,6 +10665,10 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
       userId: "obsidian-client"
     });
     const ytext = this.ydoc.getText("codemirror");
+    ytext.observe(async (event, transaction) => {
+      if (transaction && transaction.local) return;
+      await this.syncYDocToLocalFile();
+    });
     this.wsProvider.on("sync", async (isSynced) => {
       if (isSynced && this.activeFile === file && this.ydoc) {
         const activeView2 = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
@@ -11048,7 +11057,7 @@ Success: ${syncedCount}, Failed: ${failedCount}`);
           }
         }
         const wsUrl = this.settings.serverUrl.replace(/^http/, "ws");
-        const roomName = `/workspace/${this.settings.workspaceId}/doc/${docId}`;
+        const roomName = `workspace/${this.settings.workspaceId}/doc/${docId}`;
         const tempYDoc = new Doc();
         const tempWs = new WebsocketProvider(wsUrl, roomName, tempYDoc, {
           connect: true,
@@ -11120,25 +11129,30 @@ var CoSyncSettingTab = class extends import_obsidian.PluginSettingTab {
           new import_obsidian.Notice("CoSync: Connection Code parsed successfully!");
           await this.plugin.saveSettings();
           this.display();
+          await this.plugin.reconnect();
         } catch (err) {
           new import_obsidian.Notice("CoSync: Invalid connection code.");
         }
       } else {
         await this.plugin.saveSettings();
+        await this.plugin.reconnect();
       }
     }));
     containerEl.createEl("h3", { text: "Manual Connection Configurations" });
     new import_obsidian.Setting(containerEl).setName("CoSync Server Address").setDesc("Enter the URL of the collaborative server (e.g., http://localhost:4000)").addText((text2) => text2.setPlaceholder("http://localhost:4000").setValue(this.plugin.settings.serverUrl).onChange(async (value) => {
       this.plugin.settings.serverUrl = value;
       await this.plugin.saveSettings();
+      await this.plugin.reconnect();
     }));
     new import_obsidian.Setting(containerEl).setName("Authentication JWT Token").setDesc("Enter the JWT token provided by the web interface").addText((text2) => text2.setPlaceholder("Paste your JWT token here").setValue(this.plugin.settings.token).onChange(async (value) => {
       this.plugin.settings.token = value;
       await this.plugin.saveSettings();
+      await this.plugin.reconnect();
     }));
     new import_obsidian.Setting(containerEl).setName("Workspace ID").setDesc("Specify the workspace identifier to synchronize within").addText((text2) => text2.setPlaceholder("ws-default").setValue(this.plugin.settings.workspaceId).onChange(async (value) => {
       this.plugin.settings.workspaceId = value;
       await this.plugin.saveSettings();
+      await this.plugin.reconnect();
     }));
     containerEl.createEl("h3", { text: "Vault Synchronization" });
     new import_obsidian.Setting(containerEl).setName("Sync Local Vault to Web").setDesc("Upload and sync all markdown files in your vault to the connected workspace on the server.").addButton((btn) => btn.setButtonText("Sync Entire Vault Now").setCta().onClick(async () => {
@@ -11155,10 +11169,14 @@ var CoSyncSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 function injectCosyncId(content, docId) {
   const cleanContent = content.replace(/^\uFEFF/, "");
-  const frontmatterRegex = /---\r?\n([\s\S]*?cosyncId:[\s\S]*?)\r?\n---(?:\r?\n|$)/g;
+  const frontmatterRegex = /^---\r?\n([\s\S]*?cosyncId:[\s\S]*?)\r?\n---(?:\r?\n|$)/;
   let body = cleanContent;
   let otherFrontmatterLines = [];
-  body = body.replace(frontmatterRegex, (block, innerContent) => {
+  let hasFrontmatter = false;
+  const match2 = cleanContent.match(frontmatterRegex);
+  if (match2) {
+    hasFrontmatter = true;
+    const innerContent = match2[1];
     const lines = innerContent.split(/\r?\n/);
     for (const line of lines) {
       const trimmed = line.trim();
@@ -11166,20 +11184,19 @@ function injectCosyncId(content, docId) {
         otherFrontmatterLines.push(line);
       }
     }
-    return "\n";
-  });
+    body = cleanContent.replace(frontmatterRegex, "");
+  }
   body = body.replace(/cosyncId:\s*[^\r\n]+/g, "");
   body = body.trim();
-  let newContent = `---
-cosyncId: ${docId}
-`;
   if (otherFrontmatterLines.length > 0) {
     const uniqueLines = Array.from(new Set(otherFrontmatterLines));
-    newContent += uniqueLines.join("\n") + "\n";
+    return `---
+${uniqueLines.join("\n")}
+---
+
+${body}`;
   }
-  newContent += "---\n";
-  newContent += body;
-  return newContent;
+  return body;
 }
 function getContentHash(str) {
   let hash = 5381;
@@ -11197,10 +11214,22 @@ function updateYTextCleanly(ytext, newText) {
   while (commonPrefixLen < maxLen && oldText[commonPrefixLen] === normalizedNewText[commonPrefixLen]) {
     commonPrefixLen++;
   }
+  if (commonPrefixLen > 0 && commonPrefixLen < oldText.length) {
+    const prevCode = oldText.charCodeAt(commonPrefixLen - 1);
+    if (prevCode >= 55296 && prevCode <= 56319) {
+      commonPrefixLen--;
+    }
+  }
   let commonSuffixLen = 0;
   const maxSuffixLen = maxLen - commonPrefixLen;
   while (commonSuffixLen < maxSuffixLen && oldText[oldText.length - 1 - commonSuffixLen] === normalizedNewText[normalizedNewText.length - 1 - commonSuffixLen]) {
     commonSuffixLen++;
+  }
+  if (commonSuffixLen > 0 && commonSuffixLen < oldText.length) {
+    const suffixStartCode = oldText.charCodeAt(oldText.length - commonSuffixLen);
+    if (suffixStartCode >= 56320 && suffixStartCode <= 57343) {
+      commonSuffixLen--;
+    }
   }
   const deleteCount = oldText.length - commonPrefixLen - commonSuffixLen;
   const insertText2 = normalizedNewText.substring(commonPrefixLen, normalizedNewText.length - commonSuffixLen);

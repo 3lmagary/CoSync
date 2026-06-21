@@ -11,9 +11,9 @@ export class PersistenceManager {
   private flushTimer: NodeJS.Timeout | null = null;
   
   // Configurations
-  private flushIntervalMs = 1000; // Flush queue every 1s
-  private maxBatchSize = 100;      // Or when we hit 100 updates
+  private flushIntervalMs = 2000; // Flush queue every 2s (Debounce)
   private maxRetries = 3;
+  private flushingDocs = new Set<string>();
 
   constructor(dbProvider: DatabaseProvider, walDir = './wal') {
     this.dbProvider = dbProvider;
@@ -96,19 +96,17 @@ export class PersistenceManager {
 
     // Update Prometheus Metric
     persistenceQueueLength.set({ doc_id: documentId }, docQueue.length);
-
-    // 3. Batch boundary check
-    if (docQueue.length >= this.maxBatchSize) {
-      await this.flushDocument(documentId);
-    }
   }
 
   /**
    * Flushes a specific document's queue to SQLite.
    */
   async flushDocument(documentId: string): Promise<void> {
+    if (this.flushingDocs.has(documentId)) return;
     const docQueue = this.queue.get(documentId);
     if (!docQueue || docQueue.length === 0) return;
+
+    this.flushingDocs.add(documentId);
 
     // Slice queue atomically to avoid race conditions during async DB operations
     const batch = docQueue.slice();
@@ -118,34 +116,38 @@ export class PersistenceManager {
     const start = Date.now();
     let attempt = 0;
 
-    while (attempt < this.maxRetries) {
-      try {
-        await this.dbProvider.saveUpdatesBatch(documentId, batch);
-        
-        // Clean up WAL file upon successful commit
-        const walPath = path.join(this.walDir, `${documentId}.log`);
-        if (fs.existsSync(walPath)) {
-          fs.unlinkSync(walPath);
-        }
+    try {
+      while (attempt < this.maxRetries) {
+        try {
+          await this.dbProvider.saveUpdatesBatch(documentId, batch);
+          
+          // Clean up WAL file upon successful commit
+          const walPath = path.join(this.walDir, `${documentId}.log`);
+          if (fs.existsSync(walPath)) {
+            fs.unlinkSync(walPath);
+          }
 
-        const duration = (Date.now() - start) / 1000;
-        batchWriteDuration.observe(duration);
-        logger.debug(`Flushed ${batch.length} updates for doc ${documentId} to DB in ${duration * 1000}ms`);
-        return;
-      } catch (dbError) {
-        attempt++;
-        logger.warn(`Database write attempt ${attempt} failed for doc ${documentId}. Retrying...`, { error: dbError });
-        if (attempt >= this.maxRetries) {
-          logger.error(`CRITICAL: Failed to flush updates for doc ${documentId} after ${this.maxRetries} attempts. Restoring queue.`, { error: dbError });
-          // Restore sliced updates back to the head of the queue so they aren't lost
-          const currentQueue = this.queue.get(documentId) || [];
-          this.queue.set(documentId, [...batch, ...currentQueue]);
-          persistenceQueueLength.set({ doc_id: documentId }, this.queue.get(documentId)!.length);
-        } else {
-          // Linear backoff before retry
-          await new Promise(resolve => setTimeout(resolve, attempt * 200));
+          const duration = (Date.now() - start) / 1000;
+          batchWriteDuration.observe(duration);
+          logger.debug(`Flushed ${batch.length} updates for doc ${documentId} to DB in ${duration * 1000}ms`);
+          return;
+        } catch (dbError) {
+          attempt++;
+          logger.warn(`Database write attempt ${attempt} failed for doc ${documentId}. Retrying...`, { error: dbError });
+          if (attempt >= this.maxRetries) {
+            logger.error(`CRITICAL: Failed to flush updates for doc ${documentId} after ${this.maxRetries} attempts. Restoring queue.`, { error: dbError });
+            // Restore sliced updates back to the head of the queue so they aren't lost
+            const currentQueue = this.queue.get(documentId) || [];
+            this.queue.set(documentId, [...batch, ...currentQueue]);
+            persistenceQueueLength.set({ doc_id: documentId }, this.queue.get(documentId)!.length);
+          } else {
+            // Linear backoff before retry
+            await new Promise(resolve => setTimeout(resolve, attempt * 200));
+          }
         }
       }
+    } finally {
+      this.flushingDocs.delete(documentId);
     }
   }
 

@@ -14,5 +14,11 @@
     "dev:frontend": "npm run dev --workspace=frontend",
     "build:all": "npm run build --workspaces --if-present",
     "test:backend": "npm run test --workspace=backend"
+  },
+  "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36",
+    "diff-match-patch": "^1.0.5",
+    "playwright": "^1.61.0",
+    "vitest": "^4.1.9"
   }
 }

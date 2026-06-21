@@ -41,6 +41,7 @@ class CoSyncPlugin extends Plugin {
   private yjsCompartment = new Compartment();
 
   private syncTimer: NodeJS.Timeout | null = null;
+  private syncTimeout: NodeJS.Timeout | null = null;
   private statusBarEl: HTMLElement | null = null;
 
   private updateStatusBar(status: 'connected' | 'connecting' | 'disconnected' | 'syncing', customText?: string) {
@@ -146,6 +147,10 @@ class CoSyncPlugin extends Plugin {
    * Shuts down previous WebSocket links and releases Y.Doc allocations.
    */
   private async disconnectActive() {
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout);
+      this.syncTimeout = null;
+    }
     if (this.wsProvider) {
       console.log('Disconnecting from active WebSocket room...');
       try {
@@ -363,10 +368,16 @@ class CoSyncPlugin extends Plugin {
     return 'obs-' + Math.abs(hash).toString(36) + '-' + file.basename.replace(/[^a-zA-Z0-9]/g, '');
   }
 
+  public async reconnect() {
+    await this.disconnectActive();
+    this.activeFile = null;
+    await this.handleFileSwitch(true);
+  }
+
   /**
    * Binds the current active note to the server.
    */
-  private async handleFileSwitch() {
+  private async handleFileSwitch(force = false) {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) {
       this.disconnectActive();
@@ -374,7 +385,7 @@ class CoSyncPlugin extends Plugin {
     }
 
     const file = activeView.file;
-    if (!file || (this.activeFile && this.activeFile.path === file.path)) {
+    if (!file || (!force && this.activeFile && this.activeFile.path === file.path)) {
       return; // No change
     }
 
@@ -399,7 +410,7 @@ class CoSyncPlugin extends Plugin {
     this.activeDocumentId = documentId;
 
     const wsUrl = this.settings.serverUrl.replace(/^http/, 'ws');
-    const roomName = `/workspace/${this.settings.workspaceId}/doc/${documentId}`;
+    const roomName = `workspace/${this.settings.workspaceId}/doc/${documentId}`;
 
     console.log(`Connecting to collaborative room: ${roomName}`);
 
@@ -426,6 +437,18 @@ class CoSyncPlugin extends Plugin {
     });
 
     const ytext = this.ydoc.getText('codemirror');
+
+    // Sync remote updates from browser directly to the local note file on disk
+    ytext.observe((event, transaction) => {
+      // Ignore local transactions initiated by this Obsidian instance
+      if (transaction && transaction.local) return;
+
+      if (this.syncTimeout) clearTimeout(this.syncTimeout);
+      this.syncTimeout = setTimeout(async () => {
+        this.syncTimeout = null;
+        await this.syncYDocToLocalFile();
+      }, 1500); // 1500ms debounce
+    });
 
     // We do not observe and modify the disk file during active typing/sync
     // because yCollab updates CodeMirror directly, and Obsidian auto-saves
@@ -575,6 +598,14 @@ class CoSyncPlugin extends Plugin {
    */
   private async syncYDocToLocalFile() {
     if (!this.activeFile || !this.ydoc) return;
+
+    // SAFEGUARD: If editor has focus, CodeMirror's yCollab handles sync in-memory.
+    // Writing to disk now conflicts with user input and triggers file reload flickers.
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (activeView && activeView.file?.path === this.activeFile.path && activeView.editor?.hasFocus()) {
+      console.log('CoSync: Skipping disk write because active editor is focused.');
+      return;
+    }
     
     const yContent = this.ydoc.getText('codemirror').toString();
     const yContentWithId = injectCosyncId(yContent, this.activeDocumentId!);
@@ -918,7 +949,7 @@ class CoSyncPlugin extends Plugin {
 
         // 2. Fetch the text content of this document from Yjs
         const wsUrl = this.settings.serverUrl.replace(/^http/, 'ws');
-        const roomName = `/workspace/${this.settings.workspaceId}/doc/${docId}`;
+        const roomName = `workspace/${this.settings.workspaceId}/doc/${docId}`;
         const tempYDoc = new Y.Doc();
         const tempWs = new WebsocketProvider(wsUrl, roomName, tempYDoc, {
           connect: true,
@@ -1011,11 +1042,13 @@ class CoSyncSettingTab extends PluginSettingTab {
               new Notice('CoSync: Connection Code parsed successfully!');
               await this.plugin.saveSettings();
               this.display(); // Re-render to show updated fields
+              await this.plugin.reconnect();
             } catch (err) {
               new Notice('CoSync: Invalid connection code.');
             }
           } else {
             await this.plugin.saveSettings();
+            await this.plugin.reconnect();
           }
         }));
 
@@ -1030,6 +1063,7 @@ class CoSyncSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.serverUrl = value;
           await this.plugin.saveSettings();
+          await this.plugin.reconnect();
         }));
 
     new Setting(containerEl)
@@ -1041,6 +1075,7 @@ class CoSyncSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.token = value;
           await this.plugin.saveSettings();
+          await this.plugin.reconnect();
         }));
 
     new Setting(containerEl)
@@ -1052,6 +1087,7 @@ class CoSyncSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.workspaceId = value;
           await this.plugin.saveSettings();
+          await this.plugin.reconnect();
         }));
 
     containerEl.createEl('h3', { text: 'Vault Synchronization' });
@@ -1078,13 +1114,17 @@ class CoSyncSettingTab extends PluginSettingTab {
 function injectCosyncId(content: string, docId: string): string {
   const cleanContent = content.replace(/^\uFEFF/, '');
   
-  // 1. Only match frontmatter blocks that contain "cosyncId:"
-  const frontmatterRegex = /---\r?\n([\s\S]*?cosyncId:[\s\S]*?)\r?\n---(?:\r?\n|$)/g;
+  // Match frontmatter blocks containing "cosyncId:"
+  const frontmatterRegex = /^---\r?\n([\s\S]*?cosyncId:[\s\S]*?)\r?\n---(?:\r?\n|$)/;
   
   let body = cleanContent;
   let otherFrontmatterLines: string[] = [];
+  let hasFrontmatter = false;
   
-  body = body.replace(frontmatterRegex, (block, innerContent) => {
+  const match = cleanContent.match(frontmatterRegex);
+  if (match) {
+    hasFrontmatter = true;
+    const innerContent = match[1];
     const lines = innerContent.split(/\r?\n/);
     for (const line of lines) {
       const trimmed = line.trim();
@@ -1092,25 +1132,21 @@ function injectCosyncId(content: string, docId: string): string {
         otherFrontmatterLines.push(line);
       }
     }
-    return '\n'; // Keep a newline
-  });
+    body = cleanContent.replace(frontmatterRegex, '');
+  }
   
   // Also strip any remaining loose cosyncId lines
   body = body.replace(/cosyncId:\s*[^\r\n]+/g, '');
-  
-  // Clean up body
   body = body.trim();
   
-  // Reconstruct frontmatter at the very top
-  let newContent = `---\ncosyncId: ${docId}\n`;
+  // If we had other frontmatter lines, reconstruct the frontmatter block
   if (otherFrontmatterLines.length > 0) {
     const uniqueLines = Array.from(new Set(otherFrontmatterLines));
-    newContent += uniqueLines.join('\n') + '\n';
+    return `---\n${uniqueLines.join('\n')}\n---\n\n${body}`;
   }
-  newContent += '---\n';
   
-  newContent += body;
-  return newContent;
+  // If there was no other frontmatter but we did match frontmatter, return just body (stripped)
+  return body;
 }
 
 function getContentHash(str: string): string {
@@ -1131,6 +1167,13 @@ function updateYTextCleanly(ytext: Y.Text, newText: string) {
   while (commonPrefixLen < maxLen && oldText[commonPrefixLen] === normalizedNewText[commonPrefixLen]) {
     commonPrefixLen++;
   }
+  // Prevent splitting surrogate pairs at the end of the prefix
+  if (commonPrefixLen > 0 && commonPrefixLen < oldText.length) {
+    const prevCode = oldText.charCodeAt(commonPrefixLen - 1);
+    if (prevCode >= 0xD800 && prevCode <= 0xDBFF) {
+      commonPrefixLen--;
+    }
+  }
 
   let commonSuffixLen = 0;
   const maxSuffixLen = maxLen - commonPrefixLen;
@@ -1139,6 +1182,13 @@ function updateYTextCleanly(ytext: Y.Text, newText: string) {
     oldText[oldText.length - 1 - commonSuffixLen] === normalizedNewText[normalizedNewText.length - 1 - commonSuffixLen]
   ) {
     commonSuffixLen++;
+  }
+  // Prevent splitting surrogate pairs at the start of the suffix
+  if (commonSuffixLen > 0 && commonSuffixLen < oldText.length) {
+    const suffixStartCode = oldText.charCodeAt(oldText.length - commonSuffixLen);
+    if (suffixStartCode >= 0xDC00 && suffixStartCode <= 0xDFFF) {
+      commonSuffixLen--;
+    }
   }
 
   const deleteCount = oldText.length - commonPrefixLen - commonSuffixLen;

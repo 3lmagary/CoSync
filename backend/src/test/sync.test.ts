@@ -68,7 +68,7 @@ describe('Collaborative Sync Platform - Core Integration Tests', () => {
       }
     });
 
-    connectionManager = new ConnectionManager(wss, roomManager, auditLogService);
+    connectionManager = new ConnectionManager(wss, roomManager, auditLogService, db);
     
     server.on('upgrade', (req, socket, head) => {
       connectionManager.handleUpgrade(req, socket, head);

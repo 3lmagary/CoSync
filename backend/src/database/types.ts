@@ -87,7 +87,7 @@ export interface DatabaseProvider {
 
   // Snapshot operations
   saveSnapshot(documentId: string, snapshot: Uint8Array, updateCount: number): Promise<void>;
-  getLatestSnapshot(documentId: string): Promise<{ snapshot: Uint8Array; updateCount: number } | null>;
+  getLatestSnapshot(documentId: string): Promise<{ snapshot: Uint8Array; updateCount: number; createdAt: string | null } | null>;
 
   // Version operations
   createVersion(documentId: string, snapshot: Uint8Array, versionNumber: number, createdBy?: string): Promise<DocumentVersion>;

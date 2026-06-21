@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
@@ -7,13 +7,18 @@ import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import * as Y from 'yjs';
-import { WebsocketProvider } from 'y-websocket';
-import { IndexeddbPersistence } from 'y-indexeddb';
+
 import {
   Bold, Italic, Code, Strikethrough, List, ListOrdered, Heading1, Heading2,
   Undo, Redo, Users, ChevronLeft, Save, AlertTriangle, Quote, Terminal, Minus,
   Share2, Copy, Check, Menu
 } from 'lucide-react';
+import { getPlainTextIndex, getProseMirrorPos } from '../services/cursor.service';
+import { updateYTextCleanly } from '../services/diff.service';
+import { htmlToMarkdown, markdownToHtml, splitFrontmatterAndBody } from '../services/markdown.service';
+import { useYjsSync } from '../hooks/useYjsSync';
+import { useAwareness } from '../hooks/useAwareness';
+import { HybridSyncManager } from '../core/HybridSyncManager';
 
 interface EditorProps {
   token: string;
@@ -70,6 +75,9 @@ const ObsidianCursorExtension = Extension.create({
         },
         props: {
           decorations(state) {
+            if ((window as any).disableAwareness) {
+              return DecorationSet.create(state.doc, []);
+            }
             const decorations: any[] = [];
             const states = wsProvider.awareness.getStates();
             const ytext = ydoc.getText('codemirror');
@@ -100,7 +108,7 @@ const ObsidianCursorExtension = Extension.create({
                       cursorEl.className = 'remote-cursor';
                       cursorEl.style.color = color;
 
-                      const labelEl = document.createElement('div');
+                      const labelEl = document.createElement('span');
                       labelEl.innerText = name;
                       labelEl.style.position = 'absolute';
                       labelEl.style.top = '-1.4em';
@@ -147,10 +155,8 @@ export const Editor: React.FC<EditorProps> = ({
   onToggleSidebar,
   isSidebarOpen
 }) => {
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
-  const [localSynced, setLocalSynced] = useState(false);
-  const [docSize, setDocSize] = useState<number>(0);
+  const { ydoc, wsProvider, localSynced, docSize } = useYjsSync({ documentId, workspaceId, token, backendUrl });
+  const { connectionStatus, onlineUsers } = useAwareness(wsProvider, user);
   const maxDocSize = 5 * 1024 * 1024; // 5MB
 
   // Sharing states
@@ -158,124 +164,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [inviteToken, setInviteToken] = useState('');
   const [copied, setCopied] = useState(false);
   const [sharingError, setSharingError] = useState('');
-
-  // 1. Setup persistent Yjs structures
-  const prevCollabRef = useRef<any>(null);
-
-  const { ydoc, wsProvider, indexeddbProvider } = useMemo(() => {
-    // Clean up previous Yjs instances if they exist
-    if (prevCollabRef.current) {
-      console.log('Cleaning up previous Yjs instances...');
-      const { ydoc: pDoc, wsProvider: pWs, indexeddbProvider: pIdb } = prevCollabRef.current;
-      try {
-        pIdb.destroy();
-        pWs.disconnect();
-        pWs.destroy();
-        pDoc.destroy();
-      } catch (err) {
-        console.error('Error destroying previous Yjs instances', err);
-      }
-    }
-
-    const ydoc = new Y.Doc();
-    
-    // Convert http/https backend URL to ws/wss
-    const wsUrl = backendUrl.replace(/^http/, 'ws');
-    const roomName = `/workspace/${workspaceId}/doc/${documentId}`;
-
-    // Initialize Local Persistence via IndexedDB
-    const indexeddbProvider = new IndexeddbPersistence(documentId, ydoc);
-
-    // Initialize Collaborative WebSocket Provider with subprotocol auth
-    const wsProvider = new WebsocketProvider(wsUrl, roomName, ydoc, {
-      connect: false, // Don't connect immediately, wait for local IndexedDB load
-      protocols: ['co-sync-auth', token]
-    });
-
-    // Custom Exponential Reconnection backoff parameters
-    wsProvider.maxBackoffTime = 30000;
-
-    prevCollabRef.current = { ydoc, wsProvider, indexeddbProvider };
-
-    return { ydoc, wsProvider, indexeddbProvider };
-  }, [documentId, workspaceId, token, backendUrl]);
-
-  // Handle local DB synchronization and WS connection triggers
-  useEffect(() => {
-    const handleSynced = () => {
-      console.log('Local IndexedDB state loaded and synced.');
-      setLocalSynced(true);
-      
-      // Connect to WS server only AFTER local DB is loaded to prevent overwrite states
-      wsProvider.connect();
-
-      // Register this client ID as a browser client
-      const browserClients = ydoc.getArray('browser-clients');
-      if (!browserClients.toArray().includes(ydoc.clientID)) {
-        browserClients.push([ydoc.clientID]);
-      }
-    };
-
-    if (indexeddbProvider.synced) {
-      handleSynced();
-    } else {
-      indexeddbProvider.on('synced', handleSynced);
-    }
-
-    return () => {
-      indexeddbProvider.off('synced', handleSynced);
-      wsProvider.disconnect();
-    };
-  }, [wsProvider, indexeddbProvider, ydoc]);
-
-  // Monitor connection statuses and awareness presence lists
-  useEffect(() => {
-    const handleStatus = ({ status }: { status: any }) => {
-      setConnectionStatus(status);
-    };
-
-    wsProvider.on('status', handleStatus);
-
-    // Bind awareness updates
-    const handleAwareness = () => {
-      const states = wsProvider.awareness.getStates();
-      const usersList: any[] = [];
-      states.forEach((state: any, clientId: number) => {
-        if (state.user) {
-          usersList.push({
-            clientId,
-            username: state.user.name,
-            color: state.user.color,
-          });
-        }
-      });
-      setOnlineUsers(usersList);
-    };
-
-    wsProvider.awareness.on('change', handleAwareness);
-
-    // Setup local user metadata in awareness state
-    wsProvider.awareness.setLocalStateField('user', {
-      name: user.username,
-      color: user.color,
-      userId: user.id
-    });
-
-    return () => {
-      wsProvider.off('status', handleStatus);
-      wsProvider.awareness.off('change', handleAwareness);
-    };
-  }, [wsProvider, user]);
-
-  // Calculate doc size periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const stateUpdate = Y.encodeStateAsUpdate(ydoc);
-      setDocSize(stateUpdate.byteLength);
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [ydoc]);
 
   // 2. Setup TipTap Editor configuration
   const editor = useEditor({
@@ -303,9 +191,11 @@ export const Editor: React.FC<EditorProps> = ({
           },
         },
       }),
+
       Collaboration.configure({
         document: ydoc,
       }),
+
       CollaborationCursor.configure({
         provider: wsProvider,
         user: {
@@ -313,6 +203,7 @@ export const Editor: React.FC<EditorProps> = ({
           color: user.color,
         },
       }),
+
       ObsidianCursorExtension.configure({
         wsProvider,
         ydoc,
@@ -328,180 +219,111 @@ export const Editor: React.FC<EditorProps> = ({
   // Trigger editor view dispatch on Yjs awareness updates to redraw remote cursors
   useEffect(() => {
     if (!editor || !wsProvider) return;
+    let throttleTimeout: NodeJS.Timeout | null = null;
+    let lastObsidianCursorsStr = '';
     const handleAwarenessChange = () => {
-      if (!editor.isDestroyed) {
-        try {
-          editor.view.dispatch(editor.state.tr);
-        } catch (e) {
-          // Ignore state mismatch errors during tab switches
+      // Find all obsidian clients and serialize their cursor state
+      const states = wsProvider.awareness.getStates();
+      let currentCursorsStr = '';
+      states.forEach((clientState: any, clientId: number) => {
+        if (clientState.user?.userId === 'obsidian-client') {
+          const cursor = clientState.cursor;
+          if (cursor) {
+            currentCursorsStr += `${clientId}:${JSON.stringify(cursor.head)}|`;
+          }
         }
+      });
+
+      if (currentCursorsStr === lastObsidianCursorsStr) {
+        // No change in Obsidian cursors!
+        return;
       }
+      lastObsidianCursorsStr = currentCursorsStr;
+
+      if (throttleTimeout) return;
+      throttleTimeout = setTimeout(() => {
+        throttleTimeout = null;
+        console.log("Awareness Received - Throttled Redraw");
+        if (!editor.isDestroyed) {
+          try {
+            editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false));
+          } catch (e) {
+            // Ignore state mismatch errors during tab switches
+          }
+        }
+      }, 100);
     };
     wsProvider.awareness.on('change', handleAwarenessChange);
     return () => {
       wsProvider.awareness.off('change', handleAwarenessChange);
+      if (throttleTimeout) clearTimeout(throttleTimeout);
     };
   }, [editor, wsProvider]);
 
-  // Synchronize Yjs 'codemirror' Y.Text (Obsidian) with TipTap's editor
+  // Print document info
   useEffect(() => {
-    if (!editor || !ydoc || !wsProvider) return;
+    console.log("documentId:", documentId);
+    console.log("workspaceId:", workspaceId);
+    console.log("roomName:", `/workspace/${workspaceId}/doc/${documentId}`);
+  }, [documentId, workspaceId]);
 
-    const ytext = ydoc.getText('codemirror');
-    let isApplyingRemote = false;
-
-    // 1. Listen to Yjs text changes (from Obsidian)
-    let lastRemoteUpdate = 0;
-const handleYTextChange = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
-      // Skip if the transaction was initiated locally by this browser
-      if (transaction && transaction.local) return;
-      // Throttle remote updates to avoid excessive UI re-renders (min 500ms interval)
-      const now = Date.now();
-      if (now - lastRemoteUpdate < 500) return;
-      lastRemoteUpdate = now;
-      console.log('Applying remote update at', new Date(now).toISOString());
-
-      // Do not overwrite content if the user is actively typing in the browser editor
-      if (editor.isFocused) return;
-
-      // Check if the update came from another browser
-      if (transaction) {
-        const metadata = ydoc.getMap('metadata');
-        const browserClients = ydoc.getArray('browser-clients').toArray();
-        let isBrowserUpdate = false;
-
-        // A. Check metadata last-updater
-        if (transaction.changedParentTypes.has(metadata as any)) {
-          const lastUpdater = metadata.get('last-updater');
-          if (lastUpdater && browserClients.includes(lastUpdater)) {
-            isBrowserUpdate = true;
-          }
-        }
-
-        // B. Fallback: check awareness states of changed clients
-        if (!isBrowserUpdate && wsProvider) {
-          const changedClients: number[] = [];
-          transaction.afterState.forEach((clock, client) => {
-            const beforeClock = transaction.beforeState.get(client) || 0;
-            if (clock > beforeClock) {
-              changedClients.push(client);
-            }
-          });
-          
-          const hasNonObsidianClient = changedClients.some(c => {
-            const senderState = wsProvider.awareness.getStates().get(c);
-            return senderState && senderState.user && senderState.user.userId !== 'obsidian-client';
-          });
-          
-          if (hasNonObsidianClient || changedClients.some(c => browserClients.includes(c))) {
-            isBrowserUpdate = true;
-          }
-        }
-
-        if (isBrowserUpdate) {
-          // If the update originates from another browser client, ignore for now (handled elsewhere)
-          return;
-        }
+  // Log local and remote updates for diagnostics
+  useEffect(() => {
+    if (!ydoc || !wsProvider) return;
+    const handleUpdate = (_update: Uint8Array, origin: any) => {
+      if (origin === wsProvider) {
+        console.log("Yjs Update Received");
+      } else {
+        console.log("Yjs Update Sent");
       }
+    };
+    ydoc.on('update', handleUpdate);
+    return () => {
+      ydoc.off('update', handleUpdate);
+    };
+  }, [ydoc, wsProvider]);
 
-      const fullMarkdown = ytext.toString();
-      const { body } = splitFrontmatterAndBody(fullMarkdown);
-      const currentHtml = editor.getHTML();
-      const currentMarkdown = htmlToMarkdown(currentHtml);
-      
-      // If the content is already the same, do not update to prevent selection/caret reset
-      if (normalizeMarkdown(body) === normalizeMarkdown(currentMarkdown)) return;
-
-      const html = markdownToHtml(body);
-      
-      // Preserve current cursor selection before applying remote content
-      const currentSelection = editor.state.selection;
-
-      isApplyingRemote = true;
-      try {
-        editor.commands.setContent(html, false);
-        // Restore selection after content update to avoid caret jump
-        if (currentSelection && typeof currentSelection.from === 'number') {
-          editor.commands.setTextSelection({ from: currentSelection.from, to: currentSelection.to });
-        }
-      } finally {
-        isApplyingRemote = false;
+  // Log websocket connection and sync protocol states
+  useEffect(() => {
+    if (!wsProvider) return;
+    
+    const handleStatus = ({ status }: { status: string }) => {
+      if (status === 'connected') {
+        console.log("WebSocket Connected");
+        console.log("Room Joined");
+        console.log("Sync Step 1");
       }
     };
 
-    ytext.observe(handleYTextChange);
-
-    // 2. Listen to TipTap editor changes (from browser typing) with a 250ms debounce
-    let debounceTimer: NodeJS.Timeout;
-    const handleTipTapUpdate = ({ transaction }: { transaction?: any } = {}) => {
-      if (isApplyingRemote) return;
-      if (transaction && transaction.getMeta('y-prosemirror')) return;
-      
-      clearTimeout(debounceTimer);
-      // Increase debounce interval to reduce frequent remote writes
-      debounceTimer = setTimeout(() => {
-        if (isApplyingRemote) return;
-        
-        const html = editor.getHTML();
-        const bodyMarkdown = htmlToMarkdown(html);
-        
-        const fullMarkdown = ytext.toString();
-        const { frontmatter, body: currentBody } = splitFrontmatterAndBody(fullMarkdown);
-
-        if (bodyMarkdown.trim() !== currentBody.trim()) {
-          ydoc.transact(() => {
-            updateYTextCleanly(ytext, frontmatter + bodyMarkdown);
-            ydoc.getMap('metadata').set('last-updater', ydoc.clientID);
-          }, 'tiptap-update');
-          handleSelectionUpdate();
-        }
-      }, 250);
-    };
-
-    editor.on('update', handleTipTapUpdate);
-
-    // 3. Sync local browser selection/cursor to Yjs awareness relative position
-    const handleSelectionUpdate = () => {
-      try {
-        const { selection } = editor.state;
-        const plainIndex = getPlainTextIndex(editor.state.doc, selection.head);
-        
-        const fullMarkdown = ytext.toString();
-        const { frontmatter } = splitFrontmatterAndBody(fullMarkdown);
-        const frontmatterLen = frontmatter.length;
-        
-        const relativePos = Y.createRelativePositionFromTypeIndex(ytext, plainIndex + frontmatterLen);
-        
-        wsProvider.awareness.setLocalStateField('cursor', {
-          anchor: relativePos,
-          head: relativePos
-        });
-      } catch (err) {
-        console.warn('Error updating selection cursor awareness:', err);
+    const handleSync = (isSynced: boolean) => {
+      if (isSynced) {
+        console.log("Sync Step 2");
       }
     };
 
-    editor.on('selectionUpdate', handleSelectionUpdate);
-
-    // Initial sync from Yjs to TipTap if Yjs has content
-    const initialFullMarkdown = ytext.toString();
-    if (initialFullMarkdown) {
-      const { body } = splitFrontmatterAndBody(initialFullMarkdown);
-      isApplyingRemote = true;
-      try {
-        editor.commands.setContent(markdownToHtml(body), false);
-      } finally {
-        isApplyingRemote = false;
-      }
-    }
+    wsProvider.on('status', handleStatus);
+    wsProvider.on('sync', handleSync);
 
     return () => {
-      ytext.unobserve(handleYTextChange);
-      editor.off('update', handleTipTapUpdate);
-      editor.off('selectionUpdate', handleSelectionUpdate);
-      clearTimeout(debounceTimer);
+      wsProvider.off('status', handleStatus);
+      wsProvider.off('sync', handleSync);
     };
-  }, [editor, ydoc, wsProvider]);
+  }, [wsProvider]);
+
+  // 3. Initialize HybridSyncManager for Obsidian integration bridge
+  useEffect(() => {
+    if (!editor || !ydoc || !wsProvider || !localSynced) return;
+
+    const syncManager = new HybridSyncManager(ydoc, wsProvider, editor);
+
+    // Enable both directions of the bridge
+    syncManager.setXmlToTextEnabled(true);
+    syncManager.setTextToXmlEnabled(true);
+
+    return () => {
+      syncManager.destroy();
+    };
+  }, [editor, ydoc, wsProvider, localSynced]);
 
   const handleShareDoc = async () => {
     try {
@@ -770,363 +592,4 @@ const handleYTextChange = (_event: Y.YTextEvent, transaction: Y.Transaction) => 
   );
 };
 
-// Markdown <-> HTML serialization helpers for Obsidian <-> TipTap sync
-function markdownToHtml(markdown: string): string {
-  if (!markdown) return '';
-  
-  const lines = markdown.split(/\r?\n/);
-  let html = '';
-  let inList = false;
-  let listType: 'ul' | 'ol' | null = null;
-  let inBlockquote = false;
-  let inCodeBlock = false;
-  
-  const closeList = () => {
-    if (inList) {
-      html += listType === 'ul' ? '</ul>' : '</ol>';
-      inList = false;
-      listType = null;
-    }
-  };
-  
-  const closeBlockquote = () => {
-    if (inBlockquote) {
-      html += '</blockquote>';
-      inBlockquote = false;
-    }
-  };
-
-  const closeCodeBlock = () => {
-    if (inCodeBlock) {
-      html += '</code></pre>';
-      inCodeBlock = false;
-    }
-  };
-  
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    const trimmed = line.trim();
-    
-    // Check code blocks
-    if (trimmed.startsWith('```')) {
-      closeList();
-      closeBlockquote();
-      if (inCodeBlock) {
-        closeCodeBlock();
-      } else {
-        const lang = trimmed.substring(3).trim();
-        html += `<pre><code${lang ? ` class="language-${lang}"` : ''}>`;
-        inCodeBlock = true;
-      }
-      continue;
-    }
-    
-    if (inCodeBlock) {
-      // Escape HTML entities inside code blocks
-      const escapedLine = line
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      html += escapedLine + '\n';
-      continue;
-    }
-
-    // Empty line: close lists and blockquotes
-    if (!trimmed) {
-      closeList();
-      closeBlockquote();
-      continue;
-    }
-    
-    // Check for horizontal rule
-    if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
-      closeList();
-      closeBlockquote();
-      html += '<hr />';
-      continue;
-    }
-    
-    // Check for headings
-    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
-    if (headingMatch) {
-      closeList();
-      closeBlockquote();
-      const level = headingMatch[1].length;
-      let content = headingMatch[2];
-      content = inlineMarkdownToHtml(content);
-      html += `<h${level} dir="auto">${content}</h${level}>`;
-      continue;
-    }
-    
-    // Check for blockquotes
-    if (line.startsWith('> ')) {
-      closeList();
-      if (!inBlockquote) {
-        html += '<blockquote dir="auto">';
-        inBlockquote = true;
-      }
-      let content = line.substring(2);
-      content = inlineMarkdownToHtml(content);
-      html += `<p dir="auto">${content}</p>`;
-      continue;
-    } else {
-      closeBlockquote();
-    }
-    
-    // Check for unordered list
-    const ulMatch = line.match(/^[-*+]\s+(.*)$/);
-    if (ulMatch) {
-      if (!inList || listType !== 'ul') {
-        closeList();
-        html += '<ul dir="auto">';
-        inList = true;
-        listType = 'ul';
-      }
-      let content = ulMatch[1];
-      content = inlineMarkdownToHtml(content);
-      html += `<li dir="auto">${content}</li>`;
-      continue;
-    }
-    
-    // Check for ordered list
-    const olMatch = line.match(/^(\d+)\.\s+(.*)$/);
-    if (olMatch) {
-      if (!inList || listType !== 'ol') {
-        closeList();
-        html += '<ol dir="auto">';
-        inList = true;
-        listType = 'ol';
-      }
-      let content = olMatch[2];
-      content = inlineMarkdownToHtml(content);
-      html += `<li dir="auto">${content}</li>`;
-      continue;
-    }
-    
-    // Normal paragraph
-    closeList();
-    let content = inlineMarkdownToHtml(line);
-    html += `<p dir="auto">${content}</p>`;
-  }
-  
-  closeList();
-  closeBlockquote();
-  closeCodeBlock();
-  
-  return html;
-}
-
-function inlineMarkdownToHtml(text: string): string {
-  let temp = text;
-  // Bold, Italic & Code replacements
-  temp = temp.replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>');
-  temp = temp.replace(/\*([\s\S]+?)\*/g, '<em>$1</em>');
-  temp = temp.replace(/`([\s\S]+?)`/g, '<code>$1</code>');
-  return temp;
-}
-
-function htmlToMarkdown(html: string): string {
-  if (!html) return '';
-  
-  let temp = html;
-  
-  // Replace code blocks
-  temp = temp.replace(/<pre><code(?:\s+class="language-([^"]*)")?>([\s\S]*?)<\/code><\/pre>/gi, (_, lang, content) => {
-    const language = lang ? lang.trim() : '';
-    const unescaped = content
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&');
-    return `\n\`\`\`${language}\n${unescaped.trim()}\n\`\`\`\n\n`;
-  });
-
-  // Replace horizontal rules
-  temp = temp.replace(/<hr[^>]*>/gi, '\n---\n\n');
-  
-  // Replace headings
-  temp = temp.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n');
-  temp = temp.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n');
-  temp = temp.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n');
-  temp = temp.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '#### $1\n\n');
-  temp = temp.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '##### $1\n\n');
-  temp = temp.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '###### $1\n\n');
-  
-  // Replace blockquotes
-  temp = temp.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, '> $1\n\n');
-  
-  // Replace lists
-  temp = temp.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, p1) => {
-    return p1.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n') + '\n';
-  });
-  temp = temp.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, p1) => {
-    let index = 1;
-    return p1.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, () => `${index++}. $1\n`) + '\n';
-  });
-  
-  // Replace bold, italic, code
-  temp = temp.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
-  temp = temp.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
-  temp = temp.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
-  temp = temp.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
-  temp = temp.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
-  
-  // Replace paragraphs and line breaks
-  temp = temp.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '$1\n\n');
-  temp = temp.replace(/<br\s*\/?>/gi, '\n');
-  
-  // Strip any remaining HTML tags
-  temp = temp.replace(/<[^>]+>/g, '');
-  
-  // Clean up extra spaces
-  temp = temp.replace(/\n{3,}/g, '\n\n');
-  
-  return temp.trim();
-}
-
-// Maps a plain text character index (from Obsidian) to a ProseMirror document position
-function getProseMirrorPos(doc: any, plainTextIndex: number): number {
-  let currentIndex = 0;
-  // Fallback to the end of the document content instead of the beginning (stuck on side)
-  let targetPos = doc.content.size > 2 ? doc.content.size - 1 : 1;
-
-  doc.descendants((node: any, pos: number) => {
-    if (node.isText) {
-      const length = node.text.length;
-      if (plainTextIndex >= currentIndex && plainTextIndex <= currentIndex + length) {
-        targetPos = pos + (plainTextIndex - currentIndex);
-        return false; // Found, stop search
-      }
-      currentIndex += length;
-    } else if (node.isBlock) {
-      // Paragraphs and headings in ProseMirror have open/close tokens that take up 1 position each.
-      // In plain text, they are represented by newlines.
-      if (pos > 0) {
-        currentIndex += 1; // Map block break to a newline character
-      }
-      if (plainTextIndex <= currentIndex) {
-        targetPos = pos + 1;
-        return false;
-      }
-    }
-    return true;
-  });
-
-  return targetPos;
-}
-
-// Maps a ProseMirror document position to a plain text character index (for Yjs relative selection)
-function getPlainTextIndex(doc: any, pmPos: number): number {
-  let currentIndex = 0;
-  let found = false;
-
-  doc.descendants((node: any, pos: number) => {
-    if (found) return false;
-
-    if (pos >= pmPos) {
-      found = true;
-      return false;
-    }
-
-    if (node.isText) {
-      const length = node.text.length;
-      if (pmPos >= pos && pmPos <= pos + length) {
-        currentIndex += (pmPos - pos);
-        found = true;
-        return false;
-      }
-      currentIndex += length;
-    } else if (node.isBlock) {
-      if (pos > 0) {
-        currentIndex += 1; // Map block break to a newline
-      }
-    }
-    return true;
-  });
-
-  return currentIndex;
-}
-
-// Splits content into YAML frontmatter and body markdown
-function splitFrontmatterAndBody(content: string): { frontmatter: string; body: string } {
-  const cleanContent = content.replace(/^\uFEFF/, '');
-  
-  // 1. Try to find any cosyncId in the document
-  const looseIdRegex = /cosyncId:\s*([a-zA-Z0-9-]+)/;
-  const idMatch = cleanContent.match(looseIdRegex);
-  const cosyncId = idMatch ? idMatch[1].trim() : null;
-  
-  // 2. Only match frontmatter blocks that contain "cosyncId:"
-  const frontmatterRegex = /---\r?\n([\s\S]*?cosyncId:[\s\S]*?)\r?\n---(?:\r?\n|$)/g;
-  
-  let body = cleanContent;
-  let otherFrontmatterLines: string[] = [];
-  
-  body = body.replace(frontmatterRegex, (_block, innerContent) => {
-    const lines = innerContent.split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('cosyncId:')) {
-        otherFrontmatterLines.push(line);
-      }
-    }
-    return '\n'; // Keep a newline
-  });
-  
-  // Also strip any remaining loose cosyncId lines
-  body = body.replace(/cosyncId:\s*[^\r\n]+/g, '');
-  
-  // Clean up body
-  body = body.trim();
-  
-  // Reconstruct frontmatter at the very top
-  let frontmatter = '';
-  if (cosyncId) {
-    frontmatter = `---\ncosyncId: ${cosyncId}\n`;
-    if (otherFrontmatterLines.length > 0) {
-      const uniqueLines = Array.from(new Set(otherFrontmatterLines));
-      frontmatter += uniqueLines.join('\n') + '\n';
-    }
-    frontmatter += '---\n';
-  }
-  
-  return { frontmatter, body };
-}
-
-function normalizeMarkdown(md: string): string {
-  if (!md) return '';
-  return md
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Performs a performant diff-based update to Y.Text to keep typing updates smooth and prevent layout shifts
-function updateYTextCleanly(ytext: Y.Text, newText: string) {
-  const normalizedNewText = newText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const oldText = ytext.toString().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (oldText === normalizedNewText) return;
-
-  // Find common prefix
-  let commonPrefixLen = 0;
-  const maxLen = Math.min(oldText.length, normalizedNewText.length);
-  while (commonPrefixLen < maxLen && oldText[commonPrefixLen] === normalizedNewText[commonPrefixLen]) {
-    commonPrefixLen++;
-  }
-
-  // Find common suffix
-  let commonSuffixLen = 0;
-  const maxSuffixLen = maxLen - commonPrefixLen;
-  while (
-    commonSuffixLen < maxSuffixLen &&
-    oldText[oldText.length - 1 - commonSuffixLen] === normalizedNewText[normalizedNewText.length - 1 - commonSuffixLen]
-  ) {
-    commonSuffixLen++;
-  }
-
-  const deleteCount = oldText.length - commonPrefixLen - commonSuffixLen;
-  const insertText = normalizedNewText.substring(commonPrefixLen, normalizedNewText.length - commonSuffixLen);
-
-  if (deleteCount > 0 || insertText.length > 0) {
-    ytext.delete(commonPrefixLen, deleteCount);
-    ytext.insert(commonPrefixLen, insertText);
-  }
-}
+export default Editor;

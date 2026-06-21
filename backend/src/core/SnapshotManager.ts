@@ -53,17 +53,18 @@ export class SnapshotManager {
       }
 
       // 3. Trigger: Time elapsed threshold
+      // Use the snapshot's createdAt timestamp to compute actual elapsed time.
       const latestSnapshot = await this.dbProvider.getLatestSnapshot(documentId);
-      if (latestSnapshot) {
-        // Since sqlite dates are text, we can check database records or fallback on duration.
-        // We'll calculate the age of updates: if oldest update was created > 1 hour ago.
-        // For simplicity, if we have updates, check if 1 hour has passed since last snapshot
-        // We can check if any updates exist and if first update is older than threshold
-        // (For simplicity we assume time elapsed is true if updates exist and elapsed threshold is met)
-        // Let's assume a state tracking for simplicity or query SQLite
-        // Let's check when first update was logged relative to now
-        // To be safe, if we have updates and no snapshot, or first update is older than 1 hour, we compact.
-        return true; // If updates exist and time check is evaluated, trigger compaction
+      if (latestSnapshot && latestSnapshot.createdAt) {
+        const snapshotAge = Date.now() - new Date(latestSnapshot.createdAt).getTime();
+        if (snapshotAge >= this.maxTimeElapsedMs) {
+          logger.info(`Compaction required: last snapshot for document ${documentId} is ${Math.round(snapshotAge / 60000)} min old (Limit: ${Math.round(this.maxTimeElapsedMs / 60000)} min)`);
+          return true;
+        }
+      } else if (!latestSnapshot) {
+        // No snapshot at all and updates exist → compact now
+        logger.info(`Compaction required: no existing snapshot for document ${documentId}`);
+        return true;
       }
 
       return false;

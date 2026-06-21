@@ -61,7 +61,7 @@ describe('Collaborative Sync Platform - Load & Stress Tests', () => {
       }
     });
 
-    connectionManager = new ConnectionManager(wss, roomManager, auditLogService);
+    connectionManager = new ConnectionManager(wss, roomManager, auditLogService, db);
     server.on('upgrade', (req, socket, head) => {
       connectionManager.handleUpgrade(req, socket, head);
     });

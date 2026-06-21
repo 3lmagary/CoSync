@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import * as Y from 'yjs';
+import rateLimit from 'express-rate-limit';
 
 // Config env loading
 dotenv.config();
@@ -74,9 +75,41 @@ const wss = new WebSocketServer({
   }
 });
 
-const connectionManager = new ConnectionManager(wss, roomManager, auditLogService);
+const connectionManager = new ConnectionManager(wss, roomManager, auditLogService, dbProvider);
 
+// ---------------------------------------------------------------------------
+// HTTP Rate Limiters
+// ---------------------------------------------------------------------------
+
+/** Strict limiter for authentication endpoints (login/register). */
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,                   // 20 requests per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again later.' },
+  skip: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || req.hostname === 'localhost';
+  }
+});
+
+/** Moderate limiter for sensitive write operations (invite-token, restore, backup). */
+const sensitiveRateLimiter = rateLimit({
+  windowMs: 60 * 1000,       // 1 minute
+  max: 10,                   // 10 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please try again later.' },
+  skip: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || req.hostname === 'localhost';
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Middleware
+// ---------------------------------------------------------------------------
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -126,8 +159,10 @@ app.get('/metrics', async (req, res) => {
   }
 });
 
-// Auth REST endpoints
-app.post('/api/auth/register', async (req, res) => {
+// ---------------------------------------------------------------------------
+// Auth REST endpoints (rate-limited)
+// ---------------------------------------------------------------------------
+app.post('/api/auth/register', authRateLimiter, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
@@ -150,7 +185,8 @@ app.post('/api/auth/register', async (req, res) => {
     const user = await dbProvider.createUser(userId, username, passwordHash, color);
     const token = generateToken({ userId: user.id, username: user.username, color: user.color });
 
-    await auditLogService.log('register', { userId: user.id, ipAddress: req.ip });
+    // Fire-and-forget audit log
+    auditLogService.log('register', { userId: user.id, ipAddress: req.ip });
 
     res.status(201).json({ token, user: { id: user.id, username: user.username, color: user.color } });
   } catch (err) {
@@ -159,7 +195,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimiter, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
@@ -172,7 +208,8 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = generateToken({ userId: user.id, username: user.username, color: user.color });
-    await auditLogService.log('login', { userId: user.id, ipAddress: req.ip });
+    // Fire-and-forget audit log
+    auditLogService.log('login', { userId: user.id, ipAddress: req.ip });
 
     res.status(200).json({ token, user: { id: user.id, username: user.username, color: user.color } });
   } catch (err) {
@@ -194,7 +231,7 @@ app.post('/api/workspaces', authMiddleware, async (req: AuthenticatedRequest, re
     const workspaceId = 'ws-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
     const ws = await dbProvider.createWorkspace(workspaceId, name, ownerId);
     
-    await auditLogService.log('create_workspace', { userId: ownerId, workspaceId, ipAddress: req.ip });
+    auditLogService.log('create_workspace', { userId: ownerId, workspaceId, ipAddress: req.ip });
     res.status(201).json(ws);
   } catch (err) {
     logger.error('Workspace creation failed', { error: err });
@@ -228,7 +265,7 @@ app.delete('/api/workspaces/:workspaceId', authMiddleware, async (req: Authentic
     }
 
     await dbProvider.deleteWorkspace(workspaceId);
-    await auditLogService.log('delete_workspace', { userId, workspaceId, ipAddress: req.ip });
+    auditLogService.log('delete_workspace', { userId, workspaceId, ipAddress: req.ip });
     res.status(200).json({ message: 'Workspace deleted successfully' });
   } catch (err) {
     logger.error('Workspace deletion failed', { error: err });
@@ -256,7 +293,7 @@ app.put('/api/workspaces/:workspaceId', authMiddleware, async (req: Authenticate
     }
 
     await dbProvider.renameWorkspace(workspaceId, name);
-    await auditLogService.log('rename_workspace', { userId, workspaceId, ipAddress: req.ip });
+    auditLogService.log('rename_workspace', { userId, workspaceId, ipAddress: req.ip });
     res.status(200).json({ message: 'Workspace renamed successfully' });
   } catch (err) {
     logger.error('Workspace rename failed', { error: err });
@@ -283,7 +320,7 @@ app.post('/api/workspaces/:workspaceId/share', authMiddleware, async (req: Authe
     }
 
     const addedUser = await dbProvider.addWorkspaceMember(workspaceId, username);
-    await auditLogService.log('share_workspace', { userId, workspaceId, ipAddress: req.ip });
+    auditLogService.log('share_workspace', { userId, workspaceId, ipAddress: req.ip });
     res.status(200).json({ message: `Workspace shared with ${username} successfully`, user: { id: addedUser.id, username: addedUser.username } });
   } catch (err) {
     logger.error('Workspace share failed', { error: err });
@@ -291,7 +328,7 @@ app.post('/api/workspaces/:workspaceId/share', authMiddleware, async (req: Authe
   }
 });
 
-app.post('/api/workspaces/:workspaceId/invite-token', authMiddleware, async (req: AuthenticatedRequest, res) => {
+app.post('/api/workspaces/:workspaceId/invite-token', authMiddleware, sensitiveRateLimiter, async (req: AuthenticatedRequest, res) => {
   const { workspaceId } = req.params;
   const userId = req.user!.userId;
 
@@ -326,7 +363,7 @@ app.post('/api/workspaces/join/:token', authMiddleware, async (req: Authenticate
     await dbProvider.addWorkspaceMemberById(workspaceId, userId);
     const ws = await dbProvider.getWorkspace(workspaceId);
 
-    await auditLogService.log('join_workspace', { userId, workspaceId, ipAddress: req.ip });
+    auditLogService.log('join_workspace', { userId, workspaceId, ipAddress: req.ip });
     res.status(200).json({ message: 'Joined workspace successfully', workspace: ws });
   } catch (err) {
     logger.error('Failed to join workspace via invite token', { error: err });
@@ -365,7 +402,7 @@ app.post('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: A
       await dbProvider.saveUpdate(documentId, Buffer.from(updateData));
     }
 
-    await auditLogService.log('create_document', { userId, workspaceId, documentId, ipAddress: req.ip });
+    auditLogService.log('create_document', { userId, workspaceId, documentId, ipAddress: req.ip });
     res.status(201).json(doc);
   } catch (err) {
     logger.error('Document creation failed', { error: err });
@@ -395,23 +432,30 @@ app.get('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: Au
   }
 });
 
-// Document modifications REST endpoints
+// ---------------------------------------------------------------------------
+// Document modifications REST endpoints (BOLA-fixed)
+// ---------------------------------------------------------------------------
 app.delete('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware, async (req: AuthenticatedRequest, res) => {
   const { workspaceId, documentId } = req.params;
   const userId = req.user!.userId;
 
   try {
-    const ws = await dbProvider.getWorkspace(workspaceId);
-    if (!ws) {
-      return res.status(404).json({ error: 'Workspace not found' });
+    // BOLA fix: verify document belongs to the claimed workspace
+    const document = await dbProvider.getDocument(documentId);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
     }
-    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (document.workspaceId !== workspaceId) {
+      return res.status(403).json({ error: 'Document does not belong to the specified workspace' });
+    }
+
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(document.workspaceId, userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Unauthorized access to workspace' });
     }
 
     await dbProvider.deleteDocument(documentId);
-    await auditLogService.log('delete_document', { userId, workspaceId, documentId, ipAddress: req.ip });
+    auditLogService.log('delete_document', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
     res.status(200).json({ message: 'Document deleted successfully' });
   } catch (err) {
     logger.error('Document deletion failed', { error: err });
@@ -429,17 +473,22 @@ app.put('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware, as
   }
 
   try {
-    const ws = await dbProvider.getWorkspace(workspaceId);
-    if (!ws) {
-      return res.status(404).json({ error: 'Workspace not found' });
+    // BOLA fix: verify document belongs to the claimed workspace
+    const document = await dbProvider.getDocument(documentId);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
     }
-    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (document.workspaceId !== workspaceId) {
+      return res.status(403).json({ error: 'Document does not belong to the specified workspace' });
+    }
+
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(document.workspaceId, userId);
     if (!isMember) {
       return res.status(403).json({ error: 'Unauthorized access to workspace' });
     }
 
     await dbProvider.renameDocument(documentId, title);
-    await auditLogService.log('rename_document', { userId, workspaceId, documentId, ipAddress: req.ip });
+    auditLogService.log('rename_document', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
     res.status(200).json({ message: 'Document renamed successfully' });
   } catch (err) {
     logger.error('Document rename failed', { error: err });
@@ -447,10 +496,24 @@ app.put('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware, as
   }
 });
 
-// Document version history APIs
+// ---------------------------------------------------------------------------
+// Document version history APIs (BOLA-fixed)
+// ---------------------------------------------------------------------------
 app.get('/api/documents/:documentId/versions', authMiddleware, async (req: AuthenticatedRequest, res) => {
   const { documentId } = req.params;
+  const userId = req.user!.userId;
+
   try {
+    // BOLA fix: verify caller is a member of the document's workspace
+    const document = await dbProvider.getDocument(documentId);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(document.workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to document' });
+    }
+
     const versions = await dbProvider.listVersions(documentId);
     res.status(200).json(versions);
   } catch (err) {
@@ -459,11 +522,22 @@ app.get('/api/documents/:documentId/versions', authMiddleware, async (req: Authe
   }
 });
 
-app.post('/api/documents/:documentId/versions/:versionId/restore', authMiddleware, async (req: AuthenticatedRequest, res) => {
+app.post('/api/documents/:documentId/versions/:versionId/restore', authMiddleware, sensitiveRateLimiter, async (req: AuthenticatedRequest, res) => {
   const { documentId, versionId } = req.params;
   const userId = req.user!.userId;
 
   try {
+    // BOLA fix: verify document exists and caller owns the workspace
+    const document = await dbProvider.getDocument(documentId);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(document.workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to document' });
+    }
+
+    // Verify the version belongs to this document (chain: version → document → workspace)
     const versions = await dbProvider.listVersions(documentId);
     const targetVersion = versions.find(v => v.id === versionId);
     if (!targetVersion) {
@@ -474,12 +548,10 @@ app.post('/api/documents/:documentId/versions/:versionId/restore', authMiddlewar
     await dbProvider.saveSnapshot(documentId, targetVersion.snapshot, 0);
     await dbProvider.clearUpdates(documentId);
 
-    // If there is an active memory room loaded, we must destroy it to force reload from restored snapshot
-    // (This is handled by roomManager restarting room state)
-    // For simplicity, we just destroy the active memory room instance so next connection re-loads it.
+    // Force-evict the in-memory room so the next connection reloads from the restored snapshot
     await roomManager.handleClientLeave(await roomManager.getOrCreateRoom(documentId), null as any, 'admin-restore');
 
-    await auditLogService.log('restore_version', { userId, documentId, ipAddress: req.ip });
+    auditLogService.log('restore_version', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
     res.status(200).json({ message: 'Version restored successfully' });
   } catch (err) {
     logger.error('Failed to restore version snapshot', { error: err });
@@ -487,8 +559,8 @@ app.post('/api/documents/:documentId/versions/:versionId/restore', authMiddlewar
   }
 });
 
-// Admin backups API
-app.post('/api/admin/backup', authMiddleware, async (req: AuthenticatedRequest, res) => {
+// Admin backups API (rate-limited)
+app.post('/api/admin/backup', authMiddleware, sensitiveRateLimiter, async (req: AuthenticatedRequest, res) => {
   if (!FeatureFlagService.isEnabled('ENABLE_BACKUPS')) {
     return res.status(403).json({ error: 'Backup system is disabled' });
   }

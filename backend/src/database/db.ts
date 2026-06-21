@@ -355,9 +355,9 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
     stmt.run(id, documentId, Buffer.from(snapshot), updateCount);
   }
 
-  async getLatestSnapshot(documentId: string): Promise<{ snapshot: Uint8Array; updateCount: number } | null> {
+  async getLatestSnapshot(documentId: string): Promise<{ snapshot: Uint8Array; updateCount: number; createdAt: string | null } | null> {
     const stmt = this.db.prepare(
-      `SELECT snapshot_data AS snapshot, update_count AS updateCount 
+      `SELECT snapshot_data AS snapshot, update_count AS updateCount, created_at AS createdAt
        FROM document_snapshots WHERE document_id = ?`
     );
     const row = stmt.get(documentId) as any;
@@ -365,6 +365,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
     return {
       snapshot: new Uint8Array(row.snapshot),
       updateCount: row.updateCount,
+      createdAt: row.createdAt ?? null,
     };
   }
 

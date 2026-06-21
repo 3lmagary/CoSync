@@ -1,8 +1,7 @@
 import * as Y from 'yjs';
+import * as syncProtocol from 'y-protocols/sync';
 // @ts-ignore
-import * as syncProtocol from 'y-protocols/dist/sync.cjs';
-// @ts-ignore
-import * as awarenessProtocol from 'y-protocols/dist/awareness.cjs';
+import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { WebSocket } from 'ws';
@@ -81,6 +80,7 @@ export class RoomManager {
 
       // Handle awareness change broadcasts
       awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
+        console.log("Awareness Sent");
         const changedClients = added.concat(updated).concat(removed);
         const message = this.awarenessManager.encodeAwarenessUpdate(awareness, changedClients);
         
@@ -123,6 +123,8 @@ export class RoomManager {
 
     activeConnections.inc({ workspace_id: workspaceId });
     logger.info(`Client joined room ${documentId}. Total clients: ${room.clients.size}`);
+    console.log("WebSocket Connected");
+    console.log("Room Joined", documentId);
 
     // --- Yjs Sync Step 1: Send server state vector to client ---
     const encoder = encoding.createEncoder();
@@ -154,6 +156,7 @@ export class RoomManager {
     try {
       const decoder = decoding.createDecoder(message);
       const messageType = decoding.readVarUint(decoder);
+      console.log(`[SERVER RoomManager]: Received WebSocket message type=${messageType}, length=${message.length}`);
 
       if (messageType === 0) {
         // Yjs Sync Message
@@ -163,6 +166,12 @@ export class RoomManager {
         // syncProtocol will read details and write corresponding steps/updates to encoder
         // Origin is set to socket to identify who applied this update
         const syncType = syncProtocol.readSyncMessage(decoder, encoder, room.doc, socket);
+        if (syncType === 1) {
+          console.log("Sync Step 1");
+        } else if (syncType === 2) {
+          console.log("Sync Step 2");
+          console.log("Yjs Update Received");
+        }
         
         // If the server wrote responses (e.g. Sync Step 2 / updates) into encoder, send back to client
         if (encoding.length(encoder) > 1) {
@@ -170,6 +179,7 @@ export class RoomManager {
         }
       } else if (messageType === 1) {
         // Yjs Awareness Message
+        console.log("Awareness Received");
         const awarenessUpdate = decoding.readVarUint8Array(decoder);
         this.awarenessManager.applyAwarenessUpdate(room.documentId, awarenessUpdate, socket);
       } else {
@@ -189,9 +199,8 @@ export class RoomManager {
     
     logger.info(`Client left room ${room.documentId}. Remaining clients: ${room.clients.size}`);
 
-    // If client had awareness, clean it up
-    // Client id identification from awareness mapping usually occurs on WebSocket disconnect
-    // In y-websocket, we can delete the client's socket references
+    // Clean up disconnected client's awareness state
+    this.awarenessManager.handleDisconnect(room.documentId, socket);
 
     // Release memory if room is completely idle
     if (room.clients.size === 0) {
@@ -241,6 +250,8 @@ export class RoomManager {
    * Broadcasts Y.Doc updates to all connected sockets in the room, excluding the sender.
    */
   private broadcastUpdate(room: Room, update: Uint8Array, originSocket: any): void {
+    console.log("SERVER BROADCAST", room.clients.size);
+    console.log("Yjs Update Sent");
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, 0); // Message Sync
     encoding.writeVarUint(encoder, 2); // Sync update type
