@@ -104,7 +104,7 @@ npm run build:all
     npm install
     npm run build
     ```
-3.  Copy the compiled files (`main.js`, `manifest.json`, and `styles.css`) into your Obsidian vault's plugin directory: `<vault>/.obsidian/plugins/cosync-sync/`.
+3.  Copy the compiled files (`main.js`, `manifest.json`, and `styles.css`) into your Obsidian vault's plugin directory: `<vault>/.obsidian/plugins/cosync-collaborative/`.
 4.  Open Obsidian settings, enable **Community Plugins**, and turn on **CoSync Collaboration**.
 5.  Configure the server URL (`http://localhost:4000`) and login credentials to start collaborating on your vault notes!
 
