@@ -444,10 +444,17 @@ class CoSyncPlugin extends Plugin {
       if (transaction && transaction.local) return;
 
       if (this.syncTimeout) clearTimeout(this.syncTimeout);
+
+      // Dynamic debounce: write faster (100ms) if the user is not actively editing in Obsidian (unfocused),
+      // and use a safe longer delay (1500ms) if focused to prevent interrupting active input.
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const isFocused = activeView && activeView.file?.path === this.activeFile?.path && activeView.editor?.hasFocus();
+      const debounceDelay = isFocused ? 1500 : 100;
+
       this.syncTimeout = setTimeout(async () => {
         this.syncTimeout = null;
         await this.syncYDocToLocalFile();
-      }, 1500); // 1500ms debounce
+      }, debounceDelay);
     });
 
     // We do not observe and modify the disk file during active typing/sync

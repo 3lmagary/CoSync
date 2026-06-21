@@ -132,10 +132,10 @@ async function run() {
     throw new Error(`FAIL: Obsidian failed to receive update. Current text: "${receivedText}"`);
   }
 
-  // Wait 1000ms so that the browser's lastXmlChangeTime check (500ms safety window) expires.
-  // In the real world, human switching between editor and Obsidian takes time, but in E2E tests it is instant.
-  console.log("Waiting 1000ms for loop prevention safety window to clear...");
-  await new Promise(r => setTimeout(r, 1000));
+  // Wait 100ms for network transmission to clear.
+  // We no longer need a 1000ms ignore window because the bridge utilizes setTimeout(..., 0) to resolve race conditions.
+  console.log("Waiting 100ms for network transmission...");
+  await new Promise(r => setTimeout(r, 100));
 
   // =========================================================================
   // TEST 2: OBSIDIAN -> BROWSER (Obsidian updates ytext, Browser editor updates)

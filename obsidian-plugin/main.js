@@ -10675,10 +10675,13 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
     ytext.observe((event, transaction) => {
       if (transaction && transaction.local) return;
       if (this.syncTimeout) clearTimeout(this.syncTimeout);
+      const activeView2 = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+      const isFocused = activeView2 && activeView2.file?.path === this.activeFile?.path && activeView2.editor?.hasFocus();
+      const debounceDelay = isFocused ? 1500 : 100;
       this.syncTimeout = setTimeout(async () => {
         this.syncTimeout = null;
         await this.syncYDocToLocalFile();
-      }, 1500);
+      }, debounceDelay);
     });
     this.wsProvider.on("sync", async (isSynced) => {
       if (isSynced && this.activeFile === file && this.ydoc) {

@@ -87,13 +87,6 @@ export class HybridSyncManager {
       // Skip if local update or from bridge
       if (transaction.local || transaction.origin === 'bridge-to-text') return;
 
-      // If yxml was changed recently (within 1000ms), it means the user is actively typing in the browser.
-      // We ignore the update to prevent disrupting the user's active typing session and let browser typing take priority.
-      if (Date.now() - this.lastXmlChangeTime < 1000) {
-        console.log("[HybridSyncManager]: Ignoring ytext change because browser has active local edits.");
-        return;
-      }
-
       console.log(`[HybridSyncManager]: Text Change detected. Origin: ${transaction.origin}. Throttling translation...`);
 
       const now = Date.now();
@@ -103,15 +96,19 @@ export class HybridSyncManager {
 
       if (this.textToXmlTimeout) clearTimeout(this.textToXmlTimeout);
 
-      if (timeSinceLast >= throttleDelay) {
-        this.lastTextToXmlTime = now;
-        this.bridgeTextToXml();
-      } else {
-        this.textToXmlTimeout = setTimeout(() => {
-          this.textToXmlTimeout = null;
-          this.lastTextToXmlTime = Date.now();
+      const runBridge = () => {
+        this.textToXmlTimeout = null;
+        this.lastTextToXmlTime = Date.now();
+        // Run in a setTimeout(..., 0) to ensure ProseMirror has processed yxml updates
+        setTimeout(() => {
           this.bridgeTextToXml();
-        }, throttleDelay - timeSinceLast);
+        }, 0);
+      };
+
+      if (timeSinceLast >= throttleDelay) {
+        runBridge();
+      } else {
+        this.textToXmlTimeout = setTimeout(runBridge, throttleDelay - timeSinceLast);
       }
     });
   }
