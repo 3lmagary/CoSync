@@ -46,9 +46,6 @@ export class HybridSyncManager {
 
     // 1. XmlFragment -> Y.Text (Browser to Obsidian)
     yxml.observeDeep((events) => {
-      this.lastXmlChangeTime = Date.now();
-
-      if (!this.enableXmlToText) return;
       if (this.isBridging) return;
 
       // Only bridge if the update was initiated locally by this browser
@@ -56,6 +53,11 @@ export class HybridSyncManager {
       const origin = events[0]?.transaction.origin;
 
       if (!hasLocalUpdate || origin === 'bridge-to-xml') return;
+
+      // Only update lastXmlChangeTime on genuine local user typing in this browser
+      this.lastXmlChangeTime = Date.now();
+
+      if (!this.enableXmlToText) return;
 
       console.log(`[HybridSyncManager]: XML Change detected. Origin: ${origin}. Throttling translation...`);
 
