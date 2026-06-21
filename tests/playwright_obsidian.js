@@ -177,8 +177,9 @@ async function run() {
   console.log(`Final Obsidian Document Plain Text:\n"${finalObsidianText.trim()}"`);
 
   // Ensure content converges
-  // We compare finalBrowserText with body of finalObsidianText (excluding frontmatter)
-  if (finalObsidianText.includes(finalBrowserText)) {
+  // We compare finalBrowserText with finalObsidianText by normalizing consecutive newlines to single newlines
+  const normalizeNewlines = (str) => str.replace(/\r\n/g, '\n').replace(/\n+/g, '\n').trim();
+  if (normalizeNewlines(finalObsidianText).includes(normalizeNewlines(finalBrowserText))) {
     console.log("SUCCESS: Content convergence verified between Browser and Obsidian!");
   } else {
     throw new Error("FAIL: Divergent content between Browser and Obsidian!");

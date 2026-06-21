@@ -19,6 +19,8 @@ export class HybridSyncManager {
   private enableTextToXml = false;
 
   private lastXmlChangeTime: number = 0;
+  private lastXmlToTextTime: number = 0;
+  private lastTextToXmlTime: number = 0;
 
   constructor(ydoc: Y.Doc, wsProvider: WebsocketProvider, editor: Editor) {
     this.ydoc = ydoc;
@@ -55,13 +57,24 @@ export class HybridSyncManager {
 
       if (!hasLocalUpdate || origin === 'bridge-to-xml') return;
 
-      console.log(`[HybridSyncManager]: XML Change detected. Origin: ${origin}. Scheduling translation...`);
+      console.log(`[HybridSyncManager]: XML Change detected. Origin: ${origin}. Throttling translation...`);
+
+      const now = Date.now();
+      const timeSinceLast = now - this.lastXmlToTextTime;
+      const throttleDelay = 100; // 100ms throttle for fast real-time update
 
       if (this.bridgeTimeout) clearTimeout(this.bridgeTimeout);
-      this.bridgeTimeout = setTimeout(() => {
-        this.bridgeTimeout = null;
+
+      if (timeSinceLast >= throttleDelay) {
+        this.lastXmlToTextTime = now;
         this.bridgeXmlToText();
-      }, 400); // Debounced bridge to 400ms
+      } else {
+        this.bridgeTimeout = setTimeout(() => {
+          this.bridgeTimeout = null;
+          this.lastXmlToTextTime = Date.now();
+          this.bridgeXmlToText();
+        }, throttleDelay - timeSinceLast);
+      }
     });
 
     // 2. Y.Text -> XmlFragment (Obsidian to Browser)
@@ -80,13 +93,25 @@ export class HybridSyncManager {
         return;
       }
 
-      console.log(`[HybridSyncManager]: Text Change detected. Origin: ${transaction.origin}. Scheduling translation...`);
-      
+      console.log(`[HybridSyncManager]: Text Change detected. Origin: ${transaction.origin}. Throttling translation...`);
+
+      const now = Date.now();
+      const timeSinceLast = now - this.lastTextToXmlTime;
+      // 100ms if editor is not focused (fast update for reading), 400ms if focused (less intrusive for writing)
+      const throttleDelay = this.editor.isFocused ? 400 : 100;
+
       if (this.textToXmlTimeout) clearTimeout(this.textToXmlTimeout);
-      this.textToXmlTimeout = setTimeout(() => {
-        this.textToXmlTimeout = null;
+
+      if (timeSinceLast >= throttleDelay) {
+        this.lastTextToXmlTime = now;
         this.bridgeTextToXml();
-      }, 300); // Debounced bridge to 300ms
+      } else {
+        this.textToXmlTimeout = setTimeout(() => {
+          this.textToXmlTimeout = null;
+          this.lastTextToXmlTime = Date.now();
+          this.bridgeTextToXml();
+        }, throttleDelay - timeSinceLast);
+      }
     });
   }
 

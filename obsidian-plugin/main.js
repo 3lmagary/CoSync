@@ -9556,7 +9556,8 @@ var setupWS = (provider) => {
       writeVarUint(encoder, messageSync);
       writeSyncStep1(encoder, provider.doc);
       websocket.send(toUint8Array(encoder));
-      if (provider.awareness.getLocalState() !== null) {
+      const localState = provider.awareness.getLocalState();
+      if (localState !== null) {
         const encoderAwarenessState = createEncoder();
         writeVarUint(encoderAwarenessState, messageAwareness);
         writeVarUint8Array(
@@ -9566,6 +9567,7 @@ var setupWS = (provider) => {
           ])
         );
         websocket.send(toUint8Array(encoderAwarenessState));
+      } else {
       }
     };
     provider.emit("status", [{
@@ -10356,6 +10358,7 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
     // CodeMirror 6 configuration compartment
     this.yjsCompartment = new import_state.Compartment();
     this.syncTimer = null;
+    this.syncTimeout = null;
     this.statusBarEl = null;
   }
   updateStatusBar(status, customText) {
@@ -10435,6 +10438,10 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
    * Shuts down previous WebSocket links and releases Y.Doc allocations.
    */
   async disconnectActive() {
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout);
+      this.syncTimeout = null;
+    }
     if (this.wsProvider) {
       console.log("Disconnecting from active WebSocket room...");
       try {
@@ -10665,9 +10672,13 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
       userId: "obsidian-client"
     });
     const ytext = this.ydoc.getText("codemirror");
-    ytext.observe(async (event, transaction) => {
+    ytext.observe((event, transaction) => {
       if (transaction && transaction.local) return;
-      await this.syncYDocToLocalFile();
+      if (this.syncTimeout) clearTimeout(this.syncTimeout);
+      this.syncTimeout = setTimeout(async () => {
+        this.syncTimeout = null;
+        await this.syncYDocToLocalFile();
+      }, 1500);
     });
     this.wsProvider.on("sync", async (isSynced) => {
       if (isSynced && this.activeFile === file && this.ydoc) {
@@ -10790,6 +10801,11 @@ var CoSyncPlugin = class extends import_obsidian.Plugin {
    */
   async syncYDocToLocalFile() {
     if (!this.activeFile || !this.ydoc) return;
+    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+    if (activeView && activeView.file?.path === this.activeFile.path && activeView.editor?.hasFocus()) {
+      console.log("CoSync: Skipping disk write because active editor is focused.");
+      return;
+    }
     const yContent = this.ydoc.getText("codemirror").toString();
     const yContentWithId = injectCosyncId(yContent, this.activeDocumentId);
     try {
