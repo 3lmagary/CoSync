@@ -17,7 +17,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
 
 import {
-  Bold, Italic, Code, Strikethrough, List, ListOrdered, Heading1, Heading2,
+  Bold, Italic, Code, Strikethrough, List, ListOrdered, Heading1, Heading2, Heading3,
   Users, ChevronLeft, Save, AlertTriangle, Quote, Terminal, Minus,
   Share2, Copy, Check, Menu, Maximize2, Minimize2, Table as TableIcon
 } from 'lucide-react';
@@ -187,14 +187,15 @@ export const Editor: React.FC<EditorProps> = ({
   });
 
   const slashCommands = [
-    { id: 'h1', title: 'Heading 1', desc: 'Big section heading', icon: <Heading1 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 1 }).run() },
-    { id: 'h2', title: 'Heading 2', desc: 'Medium section heading', icon: <Heading2 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 2 }).run() },
-    { id: 'bullet', title: 'Bullet List', desc: 'Simple bulleted list', icon: <List size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBulletList().run() },
-    { id: 'ordered', title: 'Ordered List', desc: 'List with numbering', icon: <ListOrdered size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleOrderedList().run() },
-    { id: 'table', title: 'Table', desc: 'Insert a 3x3 layout table', icon: <TableIcon size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-    { id: 'quote', title: 'Blockquote', desc: 'Capture a quote block', icon: <Quote size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBlockquote().run() },
-    { id: 'codeblock', title: 'Code Block', desc: 'Code snippet code block', icon: <Terminal size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleCodeBlock().run() },
-    { id: 'divider', title: 'Divider', desc: 'Visual horizontal line', icon: <Minus size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().setHorizontalRule().run() },
+    { id: 'h1', title: 'Heading 1', desc: 'Big section heading', shortcut: '#', icon: <Heading1 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 1 }).run() },
+    { id: 'h2', title: 'Heading 2', desc: 'Medium section heading', shortcut: '##', icon: <Heading2 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 2 }).run() },
+    { id: 'h3', title: 'Heading 3', desc: 'Small section heading', shortcut: '###', icon: <Heading3 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 3 }).run() },
+    { id: 'bullet', title: 'Bulleted list', desc: 'Simple bulleted list', shortcut: '-', icon: <List size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBulletList().run() },
+    { id: 'ordered', title: 'Numbered list', desc: 'List with numbering', shortcut: '1.', icon: <ListOrdered size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleOrderedList().run() },
+    { id: 'table', title: 'Table', desc: 'Insert a 3x3 layout table', shortcut: '', icon: <TableIcon size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+    { id: 'quote', title: 'Quote', desc: 'Capture a quote block', shortcut: '>', icon: <Quote size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBlockquote().run() },
+    { id: 'codeblock', title: 'Code Block', desc: 'Code snippet code block', shortcut: '```', icon: <Terminal size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleCodeBlock().run() },
+    { id: 'divider', title: 'Divider', desc: 'Visual horizontal line', shortcut: '---', icon: <Minus size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().setHorizontalRule().run() },
   ];
 
   const filteredCommands = slashCommands.filter(cmd => 
@@ -743,6 +744,9 @@ export const Editor: React.FC<EditorProps> = ({
                     <span className="slash-menu-item-title">{cmd.title}</span>
                     <span className="slash-menu-item-desc">{cmd.desc}</span>
                   </span>
+                  {cmd.shortcut && (
+                    <span className="slash-menu-item-shortcut">{cmd.shortcut}</span>
+                  )}
                 </button>
               ))}
             </div>
