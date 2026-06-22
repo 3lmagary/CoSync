@@ -239,7 +239,7 @@ const App: React.FC = () => {
             </>
           )}
 
-          <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflowY: 'auto', position: 'relative' }}>
+          <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
             {selectedDoc ? (
               <Editor
                 key={selectedDoc.documentId}

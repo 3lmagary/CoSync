@@ -9,8 +9,11 @@ import { DocumentManager } from './DocumentManager';
 import { PersistenceManager } from './PersistenceManager';
 import { SnapshotManager } from './SnapshotManager';
 import { AwarenessManager } from './AwarenessManager';
+import { PubSubProvider } from '../pubsub/types';
+import { DatabaseProvider } from '../database/types';
 import { logger } from '../services/logger';
 import { activeConnections, messagesReceived } from '../services/metrics';
+import type { DocumentVersion } from '../database/types';
 
 interface Room {
   doc: Y.Doc;
@@ -24,6 +27,8 @@ export class RoomManager {
   private persistenceManager: PersistenceManager;
   private snapshotManager: SnapshotManager;
   private awarenessManager: AwarenessManager;
+  private dbProvider: DatabaseProvider;
+  private pubSubProvider?: PubSubProvider;
 
   private rooms: Map<string, Room> = new Map();
   private pendingRooms: Map<string, Promise<Room>> = new Map();
@@ -32,12 +37,34 @@ export class RoomManager {
     documentManager: DocumentManager,
     persistenceManager: PersistenceManager,
     snapshotManager: SnapshotManager,
-    awarenessManager: AwarenessManager
+    awarenessManager: AwarenessManager,
+    dbProvider: DatabaseProvider,
+    pubSubProvider?: PubSubProvider
   ) {
     this.documentManager = documentManager;
     this.persistenceManager = persistenceManager;
     this.snapshotManager = snapshotManager;
     this.awarenessManager = awarenessManager;
+    this.dbProvider = dbProvider;
+    this.pubSubProvider = pubSubProvider;
+
+    // When running with a real PubSub backend (Redis), subscribe to a wildcard
+    // pattern channel so updates are relayed across backend instances.
+    // We use the channel format: "doc:<documentId>"
+    if (this.pubSubProvider) {
+      this.pubSubProvider.subscribe('doc:*', (message: string) => {
+        try {
+          const { documentId, update } = JSON.parse(message);
+          const room = this.rooms.get(documentId);
+          if (!room) return;
+          // Apply cross-instance update with a synthetic origin so it is broadcast
+          // to local clients and persisted, but not echoed back to the origin socket.
+          Y.applyUpdate(room.doc, new Uint8Array(update), 'pubsub');
+        } catch (err: any) {
+          logger.error('Failed applying pubsub update', { error: err });
+        }
+      });
+    }
   }
 
   /**
@@ -56,7 +83,7 @@ export class RoomManager {
       // Load Y.Doc state using snapshot + updates
       const doc = await this.documentManager.loadDocument(documentId);
       const awareness = this.awarenessManager.getOrCreateAwareness(documentId, doc);
-      
+
       const newRoom: Room = {
         doc,
         clients: new Set<WebSocket>(),
@@ -74,16 +101,23 @@ export class RoomManager {
           logger.error(`Failed to queue update for doc ${documentId}`, { error: err });
         });
 
-        // 2. Broadcast the update to other clients
+        // 2. Fan out to other backend instances when a PubSub backend is configured
+        if (this.pubSubProvider && origin !== 'pubsub') {
+          const channel = `doc:${documentId}`;
+          this.pubSubProvider.publish(channel, JSON.stringify({ documentId, update: Array.from(update) })).catch(err => {
+            logger.error(`PubSub publish failed for doc ${documentId}`, { error: err });
+          });
+        }
+
+        // 3. Broadcast the update to other clients on THIS instance
         this.broadcastUpdate(newRoom, update, origin);
       });
 
       // Handle awareness change broadcasts
-      awareness.on('update', ({ added, updated, removed }: any, origin: any) => {
-        console.log("Awareness Sent");
+      awareness.on('update', ({ added, updated, removed }: any, _origin: any) => {
         const changedClients = added.concat(updated).concat(removed);
         const message = this.awarenessManager.encodeAwarenessUpdate(awareness, changedClients);
-        
+
         // Broadcast to everyone in the room
         this.broadcastMessage(newRoom, message);
       });
@@ -123,8 +157,6 @@ export class RoomManager {
 
     activeConnections.inc({ workspace_id: workspaceId });
     logger.info(`Client joined room ${documentId}. Total clients: ${room.clients.size}`);
-    console.log("WebSocket Connected");
-    console.log("Room Joined", documentId);
 
     // --- Yjs Sync Step 1: Send server state vector to client ---
     const encoder = encoding.createEncoder();
@@ -156,7 +188,6 @@ export class RoomManager {
     try {
       const decoder = decoding.createDecoder(message);
       const messageType = decoding.readVarUint(decoder);
-      console.log(`[SERVER RoomManager]: Received WebSocket message type=${messageType}, length=${message.length}`);
 
       if (messageType === 0) {
         // Yjs Sync Message
@@ -165,21 +196,14 @@ export class RoomManager {
 
         // syncProtocol will read details and write corresponding steps/updates to encoder
         // Origin is set to socket to identify who applied this update
-        const syncType = syncProtocol.readSyncMessage(decoder, encoder, room.doc, socket);
-        if (syncType === 1) {
-          console.log("Sync Step 1");
-        } else if (syncType === 2) {
-          console.log("Sync Step 2");
-          console.log("Yjs Update Received");
-        }
-        
+        syncProtocol.readSyncMessage(decoder, encoder, room.doc, socket);
+
         // If the server wrote responses (e.g. Sync Step 2 / updates) into encoder, send back to client
         if (encoding.length(encoder) > 1) {
           socket.send(encoding.toUint8Array(encoder));
         }
       } else if (messageType === 1) {
         // Yjs Awareness Message
-        console.log("Awareness Received");
         const awarenessUpdate = decoding.readVarUint8Array(decoder);
         this.awarenessManager.applyAwarenessUpdate(room.documentId, awarenessUpdate, socket);
       } else {
@@ -191,12 +215,12 @@ export class RoomManager {
   }
 
   /**
-   * Cleans up room connections, awareness tracking, and releases memory on disconnects.
+   * Cleans up room connections, awareness tracking, and releases memory on disconnect.
    */
   async handleClientLeave(room: Room, socket: WebSocket, workspaceId: string): Promise<void> {
     room.clients.delete(socket);
-    activeConnections.dec({ workspace_id: workspaceId });
-    
+    try { activeConnections.dec({ workspace_id: workspaceId }); } catch { /* metric may be missing in tests */ }
+
     logger.info(`Client left room ${room.documentId}. Remaining clients: ${room.clients.size}`);
 
     // Clean up disconnected client's awareness state
@@ -206,6 +230,37 @@ export class RoomManager {
     if (room.clients.size === 0) {
       await this.cleanupRoom(room.documentId);
     }
+  }
+
+  /**
+   * Forcefully evicts an active room from memory — used after a version restore
+   * so the next connecting client reloads the restored snapshot. Pending writes
+   * are flushed and a compaction is run to persist the restored state cleanly.
+   */
+  async forceEvictRoom(documentId: string): Promise<void> {
+    const room = this.rooms.get(documentId);
+    this.pendingRooms.delete(documentId);
+    if (!room) {
+      logger.info(`forceEvictRoom: room ${documentId} not active; nothing to evict.`);
+      return;
+    }
+
+    logger.info(`Force-evicting room ${documentId} (${room.clients.size} clients).`);
+    await this.cleanupRoom(documentId);
+  }
+
+  /**
+   * Captures the current in-memory document state as a named version.
+   * Returns null if the room is not currently active in memory.
+   */
+  async captureVersion(documentId: string, createdBy?: string): Promise<DocumentVersion | null> {
+    const room = this.rooms.get(documentId);
+    if (!room) return null;
+    const captured = await this.snapshotManager.captureVersion(documentId, room.doc, createdBy);
+    if (!captured) return null;
+    // Fetch the full row to return the snapshot bytes as well.
+    const versions = await this.dbProvider.listVersions(documentId);
+    return versions.find(v => v.id === captured.id) || null;
   }
 
   /**
@@ -241,7 +296,7 @@ export class RoomManager {
     // 3. Clear awareness and document allocations
     this.awarenessManager.destroyAwareness(documentId);
     room.doc.destroy();
-    
+
     this.rooms.delete(documentId);
     logger.info(`Successfully unloaded room ${documentId} from memory.`);
   }
@@ -250,8 +305,6 @@ export class RoomManager {
    * Broadcasts Y.Doc updates to all connected sockets in the room, excluding the sender.
    */
   private broadcastUpdate(room: Room, update: Uint8Array, originSocket: any): void {
-    console.log("SERVER BROADCAST", room.clients.size);
-    console.log("Yjs Update Sent");
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, 0); // Message Sync
     encoding.writeVarUint(encoder, 2); // Sync update type

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseProvider, User, Workspace, Document, DocumentVersion, AuditLog } from './types';
+import { generateSecureId, generateSecureToken } from '../services/crypto';
 
 export class SQLiteDatabaseProvider implements DatabaseProvider {
   private db: Database.Database;
@@ -74,6 +75,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
       );
 
       CREATE INDEX IF NOT EXISTS idx_documents_workspace ON documents(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_documents_title ON documents(workspace_id, title);
 
       CREATE TABLE IF NOT EXISTS document_updates (
         id TEXT PRIMARY KEY,
@@ -248,7 +250,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
     if (row) {
       return row.token;
     }
-    const token = 'inv-' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const token = generateSecureToken('inv');
     const insertStmt = this.db.prepare('INSERT INTO workspace_invites (workspace_id, token) VALUES (?, ?)');
     insertStmt.run(workspaceId, token);
     return token;
@@ -302,8 +304,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
   // --- Yjs Sync operations ---
 
   async saveUpdate(documentId: string, update: Uint8Array): Promise<void> {
-    // Generate random UUID for each incremental log entry
-    const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const id = generateSecureId();
     const stmt = this.db.prepare(
       `INSERT INTO document_updates (id, document_id, update_data) VALUES (?, ?, ?)`
     );
@@ -318,7 +319,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
     );
     const runTransaction = this.db.transaction((batch: Uint8Array[]) => {
       for (const update of batch) {
-        const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        const id = generateSecureId();
         stmt.run(id, documentId, Buffer.from(update));
       }
     });
@@ -343,7 +344,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
   // --- Snapshot operations ---
 
   async saveSnapshot(documentId: string, snapshot: Uint8Array, updateCount: number): Promise<void> {
-    const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const id = generateSecureId();
     const stmt = this.db.prepare(
       `INSERT INTO document_snapshots (id, document_id, snapshot_data, update_count)
        VALUES (?, ?, ?, ?)
@@ -372,7 +373,7 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
   // --- Version operations ---
 
   async createVersion(documentId: string, snapshot: Uint8Array, versionNumber: number, createdBy?: string): Promise<DocumentVersion> {
-    const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const id = generateSecureId();
     const stmt = this.db.prepare(
       `INSERT INTO document_versions (id, document_id, snapshot, version_number, created_by)
        VALUES (?, ?, ?, ?, ?)
@@ -408,12 +409,23 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
   // --- Audit logging operations ---
 
   async logAuditEvent(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<void> {
-    const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const id = generateSecureId();
     const stmt = this.db.prepare(
       `INSERT INTO audit_logs (id, user_id, workspace_id, document_id, action, ip_address) 
        VALUES (?, ?, ?, ?, ?, ?)`
     );
     stmt.run(id, log.userId || null, log.workspaceId || null, log.documentId || null, log.action, log.ipAddress || null);
+  }
+
+  // --- Audit log maintenance ---
+
+  async pruneAuditLogsOlderThanDays(days: number): Promise<number> {
+    if (days <= 0) return 0;
+    const stmt = this.db.prepare(
+      `DELETE FROM audit_logs WHERE timestamp < datetime('now', ?)`
+    );
+    const info = stmt.run(`-${days} days`);
+    return info.changes;
   }
 
   // --- Lifecycle ---

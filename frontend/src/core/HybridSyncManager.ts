@@ -18,7 +18,6 @@ export class HybridSyncManager {
   private enableXmlToText = false;
   private enableTextToXml = false;
 
-  private lastXmlChangeTime: number = 0;
   private lastXmlToTextTime: number = 0;
   private lastTextToXmlTime: number = 0;
 
@@ -54,9 +53,6 @@ export class HybridSyncManager {
 
       if (!hasLocalUpdate || origin === 'bridge-to-xml') return;
 
-      // Only update lastXmlChangeTime on genuine local user typing in this browser
-      this.lastXmlChangeTime = Date.now();
-
       if (!this.enableXmlToText) return;
 
       console.log(`[HybridSyncManager]: XML Change detected. Origin: ${origin}. Throttling translation...`);
@@ -80,7 +76,7 @@ export class HybridSyncManager {
     });
 
     // 2. Y.Text -> XmlFragment (Obsidian to Browser)
-    ytext.observe((event, transaction) => {
+    ytext.observe((_event, transaction) => {
       if (!this.enableTextToXml) return;
       if (this.isBridging) return;
 
@@ -118,7 +114,7 @@ export class HybridSyncManager {
     const ytext = this.ydoc.getText('codemirror');
 
     // If native XML is empty but Markdown has text (e.g. created in Obsidian), populate XML
-    if (yxml.childLength === 0 && ytext.length > 0) {
+    if (yxml.length === 0 && ytext.length > 0) {
       console.log("[HybridSyncManager]: Initial sync check - Populating empty XmlFragment from Y.Text");
       this.isBridging = true;
       try {

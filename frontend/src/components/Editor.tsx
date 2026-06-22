@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
@@ -8,17 +8,26 @@ import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import * as Y from 'yjs';
 
+// Tiptap Table & Code Highlights
+import { Table } from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import { common, createLowlight } from 'lowlight';
+
 import {
   Bold, Italic, Code, Strikethrough, List, ListOrdered, Heading1, Heading2,
-  Undo, Redo, Users, ChevronLeft, Save, AlertTriangle, Quote, Terminal, Minus,
-  Share2, Copy, Check, Menu
+  Users, ChevronLeft, Save, AlertTriangle, Quote, Terminal, Minus,
+  Share2, Copy, Check, Menu, Maximize2, Minimize2, Table as TableIcon
 } from 'lucide-react';
-import { getPlainTextIndex, getProseMirrorPos } from '../services/cursor.service';
-import { updateYTextCleanly } from '../services/diff.service';
-import { htmlToMarkdown, markdownToHtml, splitFrontmatterAndBody } from '../services/markdown.service';
+import { getProseMirrorPos } from '../services/cursor.service';
+import { splitFrontmatterAndBody } from '../services/markdown.service';
 import { useYjsSync } from '../hooks/useYjsSync';
 import { useAwareness } from '../hooks/useAwareness';
 import { HybridSyncManager } from '../core/HybridSyncManager';
+
+const lowlight = createLowlight(common);
 
 interface EditorProps {
   token: string;
@@ -159,6 +168,96 @@ export const Editor: React.FC<EditorProps> = ({
   const { connectionStatus, onlineUsers } = useAwareness(wsProvider, user);
   const maxDocSize = 5 * 1024 * 1024; // 5MB
 
+  const [currentTitle, setCurrentTitle] = useState(docTitle);
+  const [widthMode, setWidthMode] = useState<'centered' | 'full'>('centered');
+
+  // Notion-like Slash Menu states
+  const [slashMenu, setSlashMenu] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    query: string;
+    selectIndex: number;
+  }>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+    query: '',
+    selectIndex: 0,
+  });
+
+  const slashCommands = [
+    { id: 'h1', title: 'Heading 1', desc: 'Big section heading', icon: <Heading1 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 1 }).run() },
+    { id: 'h2', title: 'Heading 2', desc: 'Medium section heading', icon: <Heading2 size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleHeading({ level: 2 }).run() },
+    { id: 'bullet', title: 'Bullet List', desc: 'Simple bulleted list', icon: <List size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBulletList().run() },
+    { id: 'ordered', title: 'Ordered List', desc: 'List with numbering', icon: <ListOrdered size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleOrderedList().run() },
+    { id: 'table', title: 'Table', desc: 'Insert a 3x3 layout table', icon: <TableIcon size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+    { id: 'quote', title: 'Blockquote', desc: 'Capture a quote block', icon: <Quote size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleBlockquote().run() },
+    { id: 'codeblock', title: 'Code Block', desc: 'Code snippet code block', icon: <Terminal size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().toggleCodeBlock().run() },
+    { id: 'divider', title: 'Divider', desc: 'Visual horizontal line', icon: <Minus size={14} />, action: (editorInstance: any) => editorInstance.chain().focus().setHorizontalRule().run() },
+  ];
+
+  const filteredCommands = slashCommands.filter(cmd => 
+    cmd.title.toLowerCase().includes(slashMenu.query.toLowerCase()) ||
+    cmd.id.toLowerCase().includes(slashMenu.query.toLowerCase())
+  );
+
+  const latestStateRef = React.useRef({
+    slashMenu,
+    filteredCommands
+  });
+
+  useEffect(() => {
+    latestStateRef.current = {
+      slashMenu,
+      filteredCommands
+    };
+  }, [slashMenu, filteredCommands]);
+
+  const handleExecuteCommand = (cmd: any) => {
+    if (!editor) return;
+    const { view } = editor;
+    const { selection } = view.state;
+    const text = selection.$from.parent.textContent;
+    const caretIndex = selection.$from.parentOffset;
+    const textBeforeCaret = text.slice(0, caretIndex);
+    const slashIndex = textBeforeCaret.lastIndexOf('/');
+    if (slashIndex !== -1) {
+      const startPos = selection.$from.before() + 1 + slashIndex;
+      view.dispatch(view.state.tr.delete(startPos, selection.from));
+    }
+    setTimeout(() => {
+      cmd.action(editor);
+      editor.commands.focus();
+    }, 10);
+    setSlashMenu(prev => ({ ...prev, isOpen: false }));
+  };
+
+  useEffect(() => {
+    setCurrentTitle(docTitle);
+  }, [docTitle]);
+
+  const handleTitleChange = (newTitle: string) => {
+    setCurrentTitle(newTitle);
+  };
+
+  const handleTitleBlur = async () => {
+    if (!currentTitle.trim() || currentTitle === docTitle) return;
+    try {
+      const res = await fetch(`${backendUrl}/api/workspaces/${workspaceId}/documents/${documentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ title: currentTitle.trim() })
+      });
+      if (!res.ok) throw new Error('Failed to rename document');
+    } catch (err) {
+      console.error('Failed to rename document', err);
+    }
+  };
+
   // Sharing states
   const [showShareModal, setShowShareModal] = useState(false);
   const [inviteToken, setInviteToken] = useState('');
@@ -170,6 +269,7 @@ export const Editor: React.FC<EditorProps> = ({
     extensions: [
       StarterKit.configure({
         history: false, // Collaborative extension handles history natively
+        codeBlock: false, // Use custom lowlight syntax highlighter instead
         paragraph: {
           HTMLAttributes: {
             dir: 'auto',
@@ -192,6 +292,17 @@ export const Editor: React.FC<EditorProps> = ({
         },
       }),
 
+      CodeBlockLowlight.configure({
+        lowlight,
+      }),
+
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+
       Collaboration.configure({
         document: ydoc,
       }),
@@ -213,8 +324,113 @@ export const Editor: React.FC<EditorProps> = ({
       attributes: {
         class: 'tiptap',
       },
+      handleKeyDown: (view, event) => {
+        const { slashMenu: menu, filteredCommands: filtered } = latestStateRef.current;
+        if (!menu.isOpen || filtered.length === 0) return false;
+
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          setSlashMenu(prev => ({
+            ...prev,
+            selectIndex: (prev.selectIndex + 1) % filtered.length
+          }));
+          return true;
+        }
+        
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          setSlashMenu(prev => ({
+            ...prev,
+            selectIndex: (prev.selectIndex - 1 + filtered.length) % filtered.length
+          }));
+          return true;
+        }
+
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const selectedCmd = filtered[menu.selectIndex];
+          if (selectedCmd) {
+            const { selection } = view.state;
+            const text = selection.$from.parent.textContent;
+            const caretIndex = selection.$from.parentOffset;
+            const textBeforeCaret = text.slice(0, caretIndex);
+            const slashIndex = textBeforeCaret.lastIndexOf('/');
+            if (slashIndex !== -1) {
+              const startPos = selection.$from.before() + 1 + slashIndex;
+              view.dispatch(view.state.tr.delete(startPos, selection.from));
+            }
+            setTimeout(() => {
+              selectedCmd.action(editor);
+              editor?.commands.focus();
+            }, 10);
+          }
+          setSlashMenu(prev => ({ ...prev, isOpen: false }));
+          return true;
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setSlashMenu(prev => ({ ...prev, isOpen: false }));
+          return true;
+        }
+
+        return false;
+      }
     },
   });
+
+  const handleEditorStateChange = (editorInstance: any) => {
+    const { selection } = editorInstance.state;
+    const { $from } = selection;
+    if ($from.parent.type.name !== 'paragraph') {
+      if (latestStateRef.current.slashMenu.isOpen) {
+        setSlashMenu(prev => ({ ...prev, isOpen: false }));
+      }
+      return;
+    }
+    const text = $from.parent.textContent;
+    const caretIndex = $from.parentOffset;
+    const textBeforeCaret = text.slice(0, caretIndex);
+    const slashIndex = textBeforeCaret.lastIndexOf('/');
+    
+    if (slashIndex !== -1) {
+      const query = textBeforeCaret.slice(slashIndex + 1);
+      if (!query.includes(' ')) {
+        const coords = editorInstance.view.coordsAtPos(selection.from);
+        const container = editorInstance.view.dom.closest('.editor-scroll-container');
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const x = coords.left - containerRect.left + container.scrollLeft;
+          const y = coords.bottom - containerRect.top + container.scrollTop + 5;
+          setSlashMenu(prev => ({
+            isOpen: true,
+            x,
+            y,
+            query,
+            selectIndex: prev.isOpen && prev.query === query ? prev.selectIndex : 0
+          }));
+          return;
+        }
+      }
+    }
+    
+    if (latestStateRef.current.slashMenu.isOpen) {
+      setSlashMenu(prev => ({ ...prev, isOpen: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (!editor) return;
+    const handleStateChange = () => {
+      handleEditorStateChange(editor);
+    };
+    editor.on('update', handleStateChange);
+    editor.on('selectionUpdate', handleStateChange);
+    return () => {
+      editor.off('update', handleStateChange);
+      editor.off('selectionUpdate', handleStateChange);
+    };
+  }, [editor]);
 
   // Trigger editor view dispatch on Yjs awareness updates to redraw remote cursors
   useEffect(() => {
@@ -344,42 +560,49 @@ export const Editor: React.FC<EditorProps> = ({
   if (!editor) return null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '1.5rem', gap: '1.25rem', width: '100%', height: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, width: '100%', height: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
       
       {/* Editor Header Section */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1.5rem', borderBottom: '1px solid var(--border-color)', background: 'var(--navbar-bg)', backdropFilter: 'blur(10px)', zIndex: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {!isSidebarOpen && onToggleSidebar && (
             <button onClick={onToggleSidebar} className="btn-secondary" style={{ padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Show Sidebar">
               <Menu size={20} />
             </button>
           )}
-          <button onClick={onBack} className="btn-secondary" style={{ padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <button onClick={onBack} className="btn-secondary" style={{ padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Back to Documents">
             <ChevronLeft size={20} />
           </button>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>{docTitle}</h2>
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', alignItems: 'center' }}>
-              <span className={`status-badge ${connectionStatus}`}>
-                <span className="pulse-dot"></span>
-                <span>{connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting' : 'Disconnected'}</span>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span className={`status-badge ${connectionStatus}`}>
+              <span className="pulse-dot"></span>
+              <span>{connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting' : 'Disconnected'}</span>
+            </span>
+            <span className="status-badge" style={{ color: '#9ca3af', gap: '0.25rem' }}>
+              <Save size={14} />
+              <span>{localSynced ? 'Saved' : 'Saving...'}</span>
+            </span>
+            {docSize > maxDocSize * 0.8 && (
+              <span className="status-badge" style={{ color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', gap: '0.25rem' }}>
+                <AlertTriangle size={14} />
+                <span>Size Warning: {(docSize / 1024 / 1024).toFixed(2)}MB</span>
               </span>
-              <span className="status-badge" style={{ color: '#9ca3af', gap: '0.25rem' }}>
-                <Save size={14} />
-                <span>{localSynced ? 'Offline Saved' : 'Caching...'}</span>
-              </span>
-              {docSize > maxDocSize * 0.8 && (
-                <span className="status-badge" style={{ color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', gap: '0.25rem' }}>
-                  <AlertTriangle size={14} />
-                  <span>Size Warning: {(docSize / 1024 / 1024).toFixed(2)}MB</span>
-                </span>
-              )}
-            </div>
+            )}
           </div>
         </div>
 
-        {/* Online Presence & Share list in Toolbar */}
+        {/* Action Buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {/* Toggle Width Mode */}
+          <button
+            onClick={() => setWidthMode(prev => prev === 'centered' ? 'full' : 'centered')}
+            className="btn-secondary"
+            style={{ padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            title={widthMode === 'centered' ? "Full Width" : "Readable Width"}
+          >
+            {widthMode === 'centered' ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
+          </button>
+
           {/* Share Document Button */}
           <button
             onClick={handleShareDoc}
@@ -425,125 +648,124 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
       </div>
 
+      {/* Selection Bubble Menu */}
+      {editor && (
+        <BubbleMenu editor={editor} tippyOptions={{ duration: 150 }}>
+          <div className="bubble-menu">
+            <button
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              className={editor.isActive('bold') ? 'is-active' : ''}
+              title="Bold"
+            >
+              <Bold size={14} />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              className={editor.isActive('italic') ? 'is-active' : ''}
+              title="Italic"
+            >
+              <Italic size={14} />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              className={editor.isActive('strike') ? 'is-active' : ''}
+              title="Strikethrough"
+            >
+              <Strikethrough size={14} />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleCode().run()}
+              className={editor.isActive('code') ? 'is-active' : ''}
+              title="Inline Code"
+            >
+              <Code size={14} />
+            </button>
+            <div style={{ width: '1px', height: '14px', background: 'rgba(255,255,255,0.15)', margin: 'auto 0.25rem' }}></div>
+            <button
+              onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              className={editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}
+              title="Heading 1"
+            >
+              <Heading1 size={14} />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              className={editor.isActive('heading', { level: 2 }) ? 'is-active' : ''}
+              title="Heading 2"
+            >
+              <Heading2 size={14} />
+            </button>
+            <div style={{ width: '1px', height: '14px', background: 'rgba(255,255,255,0.15)', margin: 'auto 0.25rem' }}></div>
+            <button
+              onClick={() => editor.chain().focus().toggleBulletList().run()}
+              className={editor.isActive('bulletList') ? 'is-active' : ''}
+              title="Bullet List"
+            >
+              <List size={14} />
+            </button>
+            <button
+              onClick={() => editor.chain().focus().toggleBlockquote().run()}
+              className={editor.isActive('blockquote') ? 'is-active' : ''}
+              title="Blockquote"
+            >
+              <Quote size={14} />
+            </button>
+          </div>
+        </BubbleMenu>
+      )}
+
       {sharingError && (
-        <div style={{ padding: '0.5rem 0.75rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#fca5a5', borderRadius: '8px', fontSize: '0.8rem' }}>
+        <div style={{ margin: '1rem 1.5rem 0', padding: '0.5rem 0.75rem', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#fca5a5', borderRadius: '8px', fontSize: '0.8rem' }}>
           {sharingError}
         </div>
       )}
 
-      {/* Tiptap Collaborative Editor Box */}
-      <div className="editor-wrapper">
-        
-        {/* Editor text formatting toolbar */}
-        <div className="editor-toolbar">
-          <button
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            className={`toolbar-btn ${editor.isActive('bold') ? 'is-active' : ''}`}
-            title="Bold"
-          >
-            <Bold size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            className={`toolbar-btn ${editor.isActive('italic') ? 'is-active' : ''}`}
-            title="Italic"
-          >
-            <Italic size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-            className={`toolbar-btn ${editor.isActive('strike') ? 'is-active' : ''}`}
-            title="Strikethrough"
-          >
-            <Strikethrough size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleCode().run()}
-            className={`toolbar-btn ${editor.isActive('code') ? 'is-active' : ''}`}
-            title="Inline Code"
-          >
-            <Code size={18} />
-          </button>
+      {/* Clean Document View */}
+      <div className="editor-clean-layout">
+        {/* Scrollable document area */}
+        <div className="editor-scroll-container">
+          {slashMenu.isOpen && filteredCommands.length > 0 && (
+            <div 
+              className="slash-menu" 
+              style={{ 
+                top: slashMenu.y, 
+                left: slashMenu.x,
+              }}
+            >
+              {filteredCommands.map((cmd, idx) => (
+                <button
+                  key={cmd.id}
+                  onClick={() => handleExecuteCommand(cmd)}
+                  className={`slash-menu-item ${slashMenu.selectIndex === idx ? 'is-selected' : ''}`}
+                >
+                  <span className="slash-menu-item-icon">{cmd.icon}</span>
+                  <span className="slash-menu-item-details">
+                    <span className="slash-menu-item-title">{cmd.title}</span>
+                    <span className="slash-menu-item-desc">{cmd.desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
-          <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: 'auto 0.5rem' }}></div>
-
-          <button
-            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-            className={`toolbar-btn ${editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}`}
-            title="Heading 1"
-          >
-            <Heading1 size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-            className={`toolbar-btn ${editor.isActive('heading', { level: 2 }) ? 'is-active' : ''}`}
-            title="Heading 2"
-          >
-            <Heading2 size={18} />
-          </button>
-
-          <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: 'auto 0.5rem' }}></div>
-
-          <button
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-            className={`toolbar-btn ${editor.isActive('bulletList') ? 'is-active' : ''}`}
-            title="Bullet List"
-          >
-            <List size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-            className={`toolbar-btn ${editor.isActive('orderedList') ? 'is-active' : ''}`}
-            title="Ordered List"
-          >
-            <ListOrdered size={18} />
-          </button>
-
-          <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: 'auto 0.5rem' }}></div>
-
-          {/* New formatting tools */}
-          <button
-            onClick={() => editor.chain().focus().toggleBlockquote().run()}
-            className={`toolbar-btn ${editor.isActive('blockquote') ? 'is-active' : ''}`}
-            title="Blockquote"
-          >
-            <Quote size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-            className={`toolbar-btn ${editor.isActive('codeBlock') ? 'is-active' : ''}`}
-            title="Code Block"
-          >
-            <Terminal size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().setHorizontalRule().run()}
-            className="toolbar-btn"
-            title="Divider"
-          >
-            <Minus size={18} />
-          </button>
-
-          <div style={{ width: '1px', height: '20px', background: 'var(--border-color)', margin: 'auto 0.5rem' }}></div>
-
-          <button
-            onClick={() => editor.chain().focus().undo().run()}
-            className="toolbar-btn"
-            title="Undo"
-          >
-            <Undo size={18} />
-          </button>
-          <button
-            onClick={() => editor.chain().focus().redo().run()}
-            className="toolbar-btn"
-            title="Redo"
-          >
-            <Redo size={18} />
-          </button>
+          <div className={`editor-document-page ${widthMode === 'centered' ? 'centered-width' : 'full-width'}`}>
+            
+            {/* Inline Auto-saving Title Input */}
+            <input
+              type="text"
+              value={currentTitle}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              onBlur={handleTitleBlur}
+              className="editor-document-title-input"
+              placeholder="Untitled note"
+            />
+            
+            {/* Editable Content */}
+            <div className="tiptap-clean">
+              <EditorContent editor={editor} />
+            </div>
+          </div>
         </div>
-
-        {/* Main Editable Content area */}
-        <EditorContent editor={editor} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', background: 'var(--editor-bg)' }} />
       </div>
 
       {/* Share Document Link Modal Dialog */}
@@ -552,7 +774,7 @@ export const Editor: React.FC<EditorProps> = ({
           <div className="share-modal" onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Share Document</h3>
             <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              Anyone with this link will join this workspace and directly open this document: <strong>{docTitle}</strong>.
+              Anyone with this link will join this workspace and directly open this document: <strong>{currentTitle}</strong>.
             </p>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

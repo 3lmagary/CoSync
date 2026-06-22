@@ -95,6 +95,7 @@ export interface DatabaseProvider {
 
   // Audit logging operations
   logAuditEvent(log: Omit<AuditLog, 'id' | 'timestamp'>): Promise<void>;
+  pruneAuditLogsOlderThanDays(days: number): Promise<number>;
 
   // Lifecycle
   backup(destPath: string): Promise<void>;

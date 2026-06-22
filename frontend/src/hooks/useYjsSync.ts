@@ -90,7 +90,7 @@ export function useYjsSync({ documentId, workspaceId, token, backendUrl }: { doc
           } catch (e) {
             console.log(`[CLIENT WS SEND Error checking type]:`, e);
           }
-          return originalSend.apply(this, arguments);
+          return originalSend.call(this, data);
         };
       }
     };
