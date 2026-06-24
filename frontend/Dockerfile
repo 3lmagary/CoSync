@@ -3,21 +3,28 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Copy root workspace manifests (includes package-lock.json)
 COPY package*.json ./
-RUN npm ci
 
-COPY . .
+# Copy frontend workspace package.json
+COPY frontend/package.json ./frontend/
+
+# Install only frontend workspace dependencies (uses root package-lock.json)
+RUN npm ci --workspace=frontend
+
+# Copy frontend source
+COPY frontend/ ./frontend/
 
 # Pass backend URL at build time if needed
 ARG VITE_BACKEND_URL=http://localhost:4000
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
 
-RUN npm run build
+RUN npm run build --workspace=frontend
 
 # Production web server stage
 FROM nginx:alpine
 
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
 # Custom Nginx configuration to support SPA routing (fallback to index.html)
 RUN echo 'server { \
