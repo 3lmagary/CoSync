@@ -515,7 +515,19 @@ app.put('/api/workspaces/:workspaceId/attachments/upload', authMiddleware, expre
       return res.status(403).json({ error: 'Unauthorized access to workspace' });
     }
 
-    const buffer = req.body as Buffer;
+    let buffer = req.body;
+    if (!Buffer.isBuffer(buffer)) {
+      // Fallback: manually read the raw body from request stream if body-parser skipped it
+      buffer = await new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', (err) => reject(err));
+      });
+    }
+
     if (!buffer || buffer.length === 0) {
       return res.status(400).json({ error: 'File content is empty' });
     }
