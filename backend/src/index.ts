@@ -135,8 +135,16 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use((req, res, next) => {
+  if (req.path.includes('/attachments/upload')) {
+    next();
+  } else {
+    express.json({ limit: '50mb' })(req, res, (err) => {
+      if (err) return next(err);
+      express.urlencoded({ limit: '50mb', extended: true })(req, res, next);
+    });
+  }
+});
 
 // 3. REST HTTP API Routes
 
