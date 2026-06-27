@@ -460,6 +460,18 @@ app.get('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: Au
   }
 });
 
+function getAttachmentPath(workspaceId: string, filepath: string): string {
+  const baseDir = process.env.DB_PATH 
+    ? path.join(path.dirname(process.env.DB_PATH), 'attachments')
+    : path.join('data', 'attachments');
+  
+  const resolvedPath = path.resolve(baseDir, workspaceId, filepath);
+  if (!resolvedPath.startsWith(path.resolve(baseDir))) {
+    throw new Error('Directory traversal detected');
+  }
+  return resolvedPath;
+}
+
 // Attachment endpoints
 app.get('/api/workspaces/:workspaceId/attachments', authMiddleware, async (req: AuthenticatedRequest, res) => {
   const { workspaceId } = req.params;
@@ -500,7 +512,7 @@ app.put('/api/workspaces/:workspaceId/attachments/upload', authMiddleware, expre
       return res.status(400).json({ error: 'File content is empty' });
     }
 
-    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    const targetPath = getAttachmentPath(workspaceId, filepath);
     const targetDir = path.dirname(targetPath);
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
@@ -535,7 +547,7 @@ app.get('/api/workspaces/:workspaceId/attachments/download', authMiddleware, asy
       return res.status(404).json({ error: 'Attachment not found' });
     }
 
-    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    const targetPath = getAttachmentPath(workspaceId, filepath);
     if (!fs.existsSync(targetPath)) {
       return res.status(404).json({ error: 'File not found on disk' });
     }
@@ -564,7 +576,7 @@ app.delete('/api/workspaces/:workspaceId/attachments', authMiddleware, async (re
 
     await dbProvider.deleteAttachment(workspaceId, filepath);
 
-    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    const targetPath = getAttachmentPath(workspaceId, filepath);
     if (fs.existsSync(targetPath)) {
       fs.unlinkSync(targetPath);
     }
