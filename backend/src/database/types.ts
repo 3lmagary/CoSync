@@ -20,6 +20,15 @@ export interface Document {
   createdAt: string;
 }
 
+export interface Attachment {
+  id: string;
+  workspaceId: string;
+  filepath: string;
+  hash: string;
+  size: number;
+  createdAt: string;
+}
+
 export interface DocumentUpdate {
   id: string;
   documentId: string;
@@ -76,8 +85,15 @@ export interface DatabaseProvider {
   createDocument(id: string, workspaceId: string, title: string): Promise<Document>;
   getDocument(id: string): Promise<Document | null>;
   getWorkspaceDocs(workspaceId: string): Promise<Document[]>;
+  getWorkspaceDocsWithVersion(workspaceId: string): Promise<Array<Document & { updatedAt: string; version: number }>>;
   deleteDocument(documentId: string): Promise<void>;
   renameDocument(documentId: string, title: string): Promise<void>;
+
+  // Attachment operations
+  getAttachment(workspaceId: string, filepath: string): Promise<Attachment | null>;
+  listAttachments(workspaceId: string): Promise<Attachment[]>;
+  saveAttachment(workspaceId: string, filepath: string, hash: string, size: number): Promise<void>;
+  deleteAttachment(workspaceId: string, filepath: string): Promise<void>;
 
   // Yjs Sync operations
   saveUpdate(documentId: string, update: Uint8Array): Promise<void>;

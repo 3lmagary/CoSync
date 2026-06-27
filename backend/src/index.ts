@@ -452,11 +452,127 @@ app.get('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: Au
       return res.status(403).json({ error: 'Unauthorized access to workspace' });
     }
 
-    const docs = await dbProvider.getWorkspaceDocs(workspaceId);
+    const docs = await dbProvider.getWorkspaceDocsWithVersion(workspaceId);
     res.status(200).json(docs);
   } catch (err) {
     logger.error('Failed to retrieve documents', { error: err });
     res.status(500).json({ error: 'Failed to retrieve documents' });
+  }
+});
+
+// Attachment endpoints
+app.get('/api/workspaces/:workspaceId/attachments', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  const { workspaceId } = req.params;
+  const userId = req.user!.userId;
+
+  try {
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to workspace' });
+    }
+
+    const attachments = await dbProvider.listAttachments(workspaceId);
+    res.status(200).json(attachments);
+  } catch (err) {
+    logger.error('Failed to list attachments', { error: err });
+    res.status(500).json({ error: 'Failed to list attachments' });
+  }
+});
+
+app.put('/api/workspaces/:workspaceId/attachments/upload', authMiddleware, express.raw({ type: '*/*', limit: '100mb' }), async (req: AuthenticatedRequest, res) => {
+  const { workspaceId } = req.params;
+  const filepath = req.query.filepath as string;
+  const hash = req.query.hash as string;
+  const userId = req.user!.userId;
+
+  if (!filepath || !hash) {
+    return res.status(400).json({ error: 'filepath and hash query parameters are required' });
+  }
+
+  try {
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to workspace' });
+    }
+
+    const buffer = req.body as Buffer;
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: 'File content is empty' });
+    }
+
+    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    const targetDir = path.dirname(targetPath);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    fs.writeFileSync(targetPath, buffer);
+
+    await dbProvider.saveAttachment(workspaceId, filepath, hash, buffer.length);
+    res.status(200).json({ message: 'Attachment uploaded successfully' });
+  } catch (err) {
+    logger.error('Failed to upload attachment', { error: err });
+    res.status(500).json({ error: 'Failed to upload attachment' });
+  }
+});
+
+app.get('/api/workspaces/:workspaceId/attachments/download', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  const { workspaceId } = req.params;
+  const filepath = req.query.filepath as string;
+  const userId = req.user!.userId;
+
+  if (!filepath) {
+    return res.status(400).json({ error: 'filepath query parameter is required' });
+  }
+
+  try {
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to workspace' });
+    }
+
+    const attachment = await dbProvider.getAttachment(workspaceId, filepath);
+    if (!attachment) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+
+    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ error: 'File not found on disk' });
+    }
+
+    res.sendFile(path.resolve(targetPath));
+  } catch (err) {
+    logger.error('Failed to download attachment', { error: err });
+    res.status(500).json({ error: 'Failed to download attachment' });
+  }
+});
+
+app.delete('/api/workspaces/:workspaceId/attachments', authMiddleware, async (req: AuthenticatedRequest, res) => {
+  const { workspaceId } = req.params;
+  const filepath = req.query.filepath as string;
+  const userId = req.user!.userId;
+
+  if (!filepath) {
+    return res.status(400).json({ error: 'filepath query parameter is required' });
+  }
+
+  try {
+    const isMember = await dbProvider.isWorkspaceMemberOrOwner(workspaceId, userId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'Unauthorized access to workspace' });
+    }
+
+    await dbProvider.deleteAttachment(workspaceId, filepath);
+
+    const targetPath = path.join('data', 'attachments', workspaceId, filepath);
+    if (fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+
+    res.status(200).json({ message: 'Attachment deleted successfully' });
+  } catch (err) {
+    logger.error('Failed to delete attachment', { error: err });
+    res.status(500).json({ error: 'Failed to delete attachment' });
   }
 });
 

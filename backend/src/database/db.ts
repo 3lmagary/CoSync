@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DatabaseProvider, User, Workspace, Document, DocumentVersion, AuditLog } from './types';
+import { DatabaseProvider, User, Workspace, Document, Attachment, DocumentVersion, AuditLog } from './types';
 import { generateSecureId, generateSecureToken } from '../services/crypto';
 
 export class SQLiteDatabaseProvider implements DatabaseProvider {
@@ -124,6 +124,18 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
       CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_doc ON audit_logs(document_id);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(timestamp);
+
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        filepath TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_path ON attachments(workspace_id, filepath);
     `;
 
     this.db.exec(schemaSql);
@@ -291,6 +303,28 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
     return stmt.all(workspaceId) as Document[];
   }
 
+  async getWorkspaceDocsWithVersion(workspaceId: string): Promise<Array<Document & { updatedAt: string; version: number }>> {
+    const stmt = this.db.prepare(
+      `SELECT d.id, d.workspace_id AS workspaceId, d.title, d.created_at AS createdAt,
+              COALESCE(MAX(u.created_at), s.created_at, d.created_at) AS updatedAt,
+              COALESCE(s.update_count, 0) + (SELECT COUNT(*) FROM document_updates WHERE document_id = d.id) AS version
+       FROM documents d
+       LEFT JOIN document_snapshots s ON s.document_id = d.id
+       LEFT JOIN document_updates u ON u.document_id = d.id
+       WHERE d.workspace_id = ?
+       GROUP BY d.id`
+    );
+    const rows = stmt.all(workspaceId) as any[];
+    return rows.map(r => ({
+      id: r.id,
+      workspaceId: r.workspaceId,
+      title: r.title,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      version: r.version
+    }));
+  }
+
   async deleteDocument(documentId: string): Promise<void> {
     const stmt = this.db.prepare('DELETE FROM documents WHERE id = ?');
     stmt.run(documentId);
@@ -299,6 +333,43 @@ export class SQLiteDatabaseProvider implements DatabaseProvider {
   async renameDocument(documentId: string, title: string): Promise<void> {
     const stmt = this.db.prepare('UPDATE documents SET title = ? WHERE id = ?');
     stmt.run(title, documentId);
+  }
+
+  // --- Attachment operations ---
+
+  async getAttachment(workspaceId: string, filepath: string): Promise<Attachment | null> {
+    const stmt = this.db.prepare(
+      `SELECT id, workspace_id AS workspaceId, filepath, hash, size, created_at AS createdAt
+       FROM attachments WHERE workspace_id = ? AND filepath = ?`
+    );
+    const row = stmt.get(workspaceId, filepath) as any;
+    return row || null;
+  }
+
+  async listAttachments(workspaceId: string): Promise<Attachment[]> {
+    const stmt = this.db.prepare(
+      `SELECT id, workspace_id AS workspaceId, filepath, hash, size, created_at AS createdAt
+       FROM attachments WHERE workspace_id = ?`
+    );
+    return stmt.all(workspaceId) as Attachment[];
+  }
+
+  async saveAttachment(workspaceId: string, filepath: string, hash: string, size: number): Promise<void> {
+    const id = generateSecureId();
+    const stmt = this.db.prepare(
+      `INSERT INTO attachments (id, workspace_id, filepath, hash, size)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(workspace_id, filepath) DO UPDATE SET
+         hash = excluded.hash,
+         size = excluded.size,
+         created_at = CURRENT_TIMESTAMP`
+    );
+    stmt.run(id, workspaceId, filepath, hash, size);
+  }
+
+  async deleteAttachment(workspaceId: string, filepath: string): Promise<void> {
+    const stmt = this.db.prepare('DELETE FROM attachments WHERE workspace_id = ? AND filepath = ?');
+    stmt.run(workspaceId, filepath);
   }
 
   // --- Yjs Sync operations ---
