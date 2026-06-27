@@ -794,15 +794,21 @@ async function startServer() {
   // Replay outstanding crash logs from WAL before incoming traffic starts
   await persistenceManager.recoverWAL();
 
-  // Ensure default workspace exists for CONNECTION_CODE sync mode
+  // Ensure admin user and default workspace exist for CONNECTION_CODE sync mode
   try {
+    const adminUser = await dbProvider.getUserById('admin');
+    if (!adminUser) {
+      await dbProvider.createUser('admin', 'admin', 'admin-password-placeholder-hash', '#000000');
+      logger.info('Created system admin user for single-code mode.');
+    }
+
     const defaultWs = await dbProvider.getWorkspace('default-workspace');
     if (!defaultWs) {
       await dbProvider.createWorkspace('default-workspace', 'Default Vault', 'admin');
       logger.info('Created default workspace for single-code sync mode.');
     }
   } catch (e) {
-    logger.error('Failed to initialize default workspace', { error: e });
+    logger.error('Failed to initialize default workspace or admin user', { error: e });
   }
 
   // Prune stale audit logs older than the configured retention window.
