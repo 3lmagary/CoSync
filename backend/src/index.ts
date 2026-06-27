@@ -794,6 +794,17 @@ async function startServer() {
   // Replay outstanding crash logs from WAL before incoming traffic starts
   await persistenceManager.recoverWAL();
 
+  // Ensure default workspace exists for CONNECTION_CODE sync mode
+  try {
+    const defaultWs = await dbProvider.getWorkspace('default-workspace');
+    if (!defaultWs) {
+      await dbProvider.createWorkspace('default-workspace', 'Default Vault', 'admin');
+      logger.info('Created default workspace for single-code sync mode.');
+    }
+  } catch (e) {
+    logger.error('Failed to initialize default workspace', { error: e });
+  }
+
   // Prune stale audit logs older than the configured retention window.
   const retentionDays = parseInt(process.env.AUDIT_LOG_RETENTION_DAYS || '90', 10);
   if (retentionDays > 0) {
