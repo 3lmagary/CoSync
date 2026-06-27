@@ -17,6 +17,7 @@ services:
       - ENABLE_BACKUPS=true
       - ENABLE_RATE_LIMIT=true
       - ENABLE_SNAPSHOTS=true
+      - CONNECTION_CODE=${CONNECTION_CODE}
     volumes:
       - sqlite-data:/app/data
       - wal-data:/app/wal
@@ -33,27 +34,6 @@ services:
       - "autoexposer.icon=si-obsidian"
       - "autoexposer.port=4000"
       - "autoexposer.subdomain=cosync-api"
-
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      args:
-        - VITE_BACKEND_URL=http://localhost:4000
-    container_name: cosync-frontend
-    ports:
-      - "5173:80"
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: always
-    labels:
-      - "autoexposer.enable=true"
-      - "autoexposer.name=CoSync Workspace"
-      - "autoexposer.group=Sync & Backup"
-      - "autoexposer.icon=si-obsidian"
-      - "autoexposer.port=5173"
-      - "autoexposer.subdomain=cosync"
 
 volumes:
   sqlite-data:

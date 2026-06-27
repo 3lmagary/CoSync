@@ -4,13 +4,11 @@
   "private": true,
   "description": "Production-grade collaborative real-time sync platform for Browser and Obsidian",
   "workspaces": [
-    "backend",
-    "frontend"
+    "backend"
   ],
   "scripts": {
     "install:all": "npm install",
     "dev:backend": "npm run dev --workspace=backend",
-    "dev:frontend": "npm run dev --workspace=frontend",
     "build:all": "npm run build --workspaces --if-present",
     "test:backend": "npm run test --workspace=backend"
   },
