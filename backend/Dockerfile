@@ -34,11 +34,11 @@ COPY backend/package.json ./backend/
 
 RUN npm ci --workspace=backend --omit=dev
 
-COPY --from=builder /app/backend/dist ./dist
+COPY --from=builder /app/backend/dist ./backend/dist
 
 EXPOSE 4000
 
 # Create WAL and DB directories
 RUN mkdir -p /app/data /app/wal
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "backend/dist/index.js"]
