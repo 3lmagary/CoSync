@@ -30,7 +30,7 @@ services:
       - "autoexposer.enable=true"
       - "autoexposer.name=CoSync API"
       - "autoexposer.group=Sync & Backup"
-      - "autoexposer.icon=✍️"
+      - "autoexposer.icon=si-obsidian"
       - "autoexposer.port=4000"
       - "autoexposer.subdomain=cosync-api"
 
@@ -51,7 +51,7 @@ services:
       - "autoexposer.enable=true"
       - "autoexposer.name=CoSync Workspace"
       - "autoexposer.group=Sync & Backup"
-      - "autoexposer.icon=✍️"
+      - "autoexposer.icon=si-obsidian"
       - "autoexposer.port=5173"
       - "autoexposer.subdomain=cosync"
 
