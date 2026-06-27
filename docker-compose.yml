@@ -11,7 +11,7 @@ services:
     environment:
       - PORT=4000
       - DATABASE_PATH=/app/data/sync.db
-      - JWT_SECRET=sync-platform-super-secret-key-1337
+      - JWT_SECRET=${JWT_SECRET}
       - LOG_LEVEL=info
       - ENABLE_METRICS=true
       - ENABLE_BACKUPS=true
