@@ -61,9 +61,10 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
 
   const token = authHeader.split(' ')[1];
 
-  // Accept CONNECTION_CODE as a valid token bypassing JWT check
-  const connectionCode = process.env.CONNECTION_CODE || 'cosync-vault-key-xyz';
-  if (token === connectionCode) {
+  // Accept CONNECTION_CODE as a valid token bypassing JWT check.
+  // SECURITY: No fallback — if CONNECTION_CODE is not set, this auth path is disabled.
+  const connectionCode = process.env.CONNECTION_CODE;
+  if (connectionCode && token === connectionCode) {
     req.user = { userId: 'admin', username: 'Admin', color: '#000' };
     return next();
   }

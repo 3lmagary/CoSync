@@ -67,7 +67,7 @@ export class ConnectionManager {
 
   // --- IP-level connection rate limits ---
   private ipRateLimits: Map<string, ConnectionRateLimitEntry> = new Map();
-  private readonly maxConnectionsPerIp = 20;       // per 60-second window
+  private readonly maxConnectionsPerIp = 200;      // per 60-second window
 
   // --- User-level connection rate limits ---
   private userConnectionCounts: Map<string, number> = new Map();
@@ -133,9 +133,10 @@ export class ConnectionManager {
     // ── Step 3: Verify JWT or CONNECTION_CODE ──────────────────────────────
     const token = protocols[authIndex + 1];
     let decodedToken: UserTokenPayload;
-    const connectionCode = process.env.CONNECTION_CODE || 'cosync-vault-key-xyz';
+    // SECURITY: No fallback — if CONNECTION_CODE is not set, this auth path is disabled.
+    const connectionCode = process.env.CONNECTION_CODE;
 
-    if (token === connectionCode) {
+    if (connectionCode && token === connectionCode) {
       decodedToken = { userId: 'admin', username: 'Admin', color: '#000' };
     } else {
       try {

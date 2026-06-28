@@ -160,7 +160,8 @@ app.get('/health/ready', async (req, res) => {
     const testUser = await dbProvider.getUserById('system-test'); // Safe query
 
     // 2. Verify WAL directory is writable
-    const testFile = path.join('./wal', '.ready-test');
+    const walDir = process.env.WAL_PATH || './wal';
+    const testFile = path.join(walDir, '.ready-test');
     fs.writeFileSync(testFile, 'test');
     fs.unlinkSync(testFile);
 
@@ -780,8 +781,11 @@ app.post('/api/documents/:documentId/versions', authMiddleware, sensitiveRateLim
   }
 });
 
-// Admin backups API (rate-limited)
+// Admin backups API (rate-limited, admin-only)
 app.post('/api/admin/backup', authMiddleware, sensitiveRateLimiter, async (req: AuthenticatedRequest, res) => {
+  if (req.user!.userId !== 'admin') {
+    return res.status(403).json({ error: 'Only admin users can perform backups' });
+  }
   if (!FeatureFlagService.isEnabled('ENABLE_BACKUPS')) {
     return res.status(403).json({ error: 'Backup system is disabled' });
   }
@@ -795,8 +799,11 @@ app.post('/api/admin/backup', authMiddleware, sensitiveRateLimiter, async (req: 
   }
 });
 
-// Admin restore API — restores a previous database backup file.
+// Admin restore API — restores a previous database backup file (admin-only).
 app.post('/api/admin/restore', authMiddleware, sensitiveRateLimiter, async (req: AuthenticatedRequest, res) => {
+  if (req.user!.userId !== 'admin') {
+    return res.status(403).json({ error: 'Only admin users can restore backups' });
+  }
   if (!FeatureFlagService.isEnabled('ENABLE_BACKUPS')) {
     return res.status(403).json({ error: 'Backup system is disabled' });
   }
@@ -830,7 +837,11 @@ async function startServer() {
   try {
     const adminUser = await dbProvider.getUserById('admin');
     if (!adminUser) {
-      await dbProvider.createUser('admin', 'admin', 'admin-password-placeholder-hash', '#000000');
+      // Create admin with a properly hashed placeholder. The CONNECTION_CODE
+      // auth path bypasses password validation, so this hash is only a safeguard
+      // to prevent the login endpoint from accepting a raw string comparison.
+      const adminHash = bcrypt.hashSync(generateSecureToken('admin-placeholder'), bcrypt.genSaltSync(10));
+      await dbProvider.createUser('admin', 'admin', adminHash, '#000000');
       logger.info('Created system admin user for single-code mode.');
     }
 
