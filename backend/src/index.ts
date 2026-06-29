@@ -440,6 +440,7 @@ app.post('/api/workspaces/:workspaceId/documents', authMiddleware, async (req: A
     }
 
     auditLogService.log('create_document', { userId, workspaceId, documentId, ipAddress: req.ip });
+    connectionManager.broadcastSyncNotification(workspaceId);
     res.status(201).json(doc);
   } catch (err) {
     logger.error('Document creation failed', { error: err });
@@ -541,6 +542,7 @@ app.put('/api/workspaces/:workspaceId/attachments/upload', authMiddleware, expre
     fs.writeFileSync(targetPath, buffer);
 
     await dbProvider.saveAttachment(workspaceId, filepath, hash, buffer.length);
+    connectionManager.broadcastSyncNotification(workspaceId);
     res.status(200).json({ message: 'Attachment uploaded successfully' });
   } catch (err) {
     logger.error('Failed to upload attachment', { error: err });
@@ -603,6 +605,7 @@ app.delete('/api/workspaces/:workspaceId/attachments', authMiddleware, async (re
     }
 
     res.status(200).json({ message: 'Attachment deleted successfully' });
+    connectionManager.broadcastSyncNotification(workspaceId);
   } catch (err) {
     logger.error('Failed to delete attachment', { error: err });
     res.status(500).json({ error: 'Failed to delete attachment' });
@@ -634,6 +637,7 @@ app.delete('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware,
     await dbProvider.deleteDocument(documentId);
     await roomManager.forceEvictRoom(documentId);
     auditLogService.log('delete_document', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
+    connectionManager.broadcastSyncNotification(workspaceId);
     res.status(200).json({ message: 'Document deleted successfully' });
   } catch (err) {
     logger.error('Document deletion failed', { error: err });
@@ -666,6 +670,7 @@ app.put('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware, as
 
     await dbProvider.renameDocument(documentId, cleanTitle);
     auditLogService.log('rename_document', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
+    connectionManager.broadcastSyncNotification(workspaceId);
     res.status(200).json({ message: 'Document renamed successfully' });
   } catch (err) {
     logger.error('Document rename failed', { error: err });

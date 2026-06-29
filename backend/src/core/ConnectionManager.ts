@@ -64,6 +64,7 @@ export class ConnectionManager {
   private roomManager: RoomManager;
   private auditLogService: AuditLogService;
   private dbProvider: DatabaseProvider;
+  private globalSockets: Map<string, Set<WebSocket>> = new Map();
 
   // --- IP-level connection rate limits ---
   private ipRateLimits: Map<string, ConnectionRateLimitEntry> = new Map();
@@ -161,31 +162,43 @@ export class ConnectionManager {
     }
 
     // ── Step 5: Parse URL path ─────────────────────────────────────────────
-    // Expected: /workspace/{workspaceId}/doc/{documentId}
+    // Expected: /workspace/{workspaceId}/doc/{documentId} OR /workspace/{workspaceId}/global
     const normalizedUrl = url.replace(/\/+/g, '/');
-    const match = normalizedUrl.match(/^\/workspace\/([^/]+)\/doc\/([^/]+)$/);
-    if (!match) {
-      logger.warn(`WebSocket upgrade rejected: invalid URL path structure: "${url}"`);
-      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-      socket.destroy();
-      return;
-    }
+    let match = normalizedUrl.match(/^\/workspace\/([^/]+)\/doc\/([^/]+)$/);
+    let isGlobal = false;
+    let documentId = '';
+    let workspaceId = '';
 
-    const documentId = match[2];
-
-    // ── Step 6: Authorization – verify document.workspaceId, NOT URL param ─
-    // Source of truth is the database, not the URL workspaceId supplied by the client.
-    let authorizedWorkspaceId: string;
-    try {
-      const document = await this.dbProvider.getDocument(documentId);
-      if (!document) {
-        logger.warn(`WebSocket upgrade rejected: document not found: ${documentId} (user: ${decodedToken.username})`);
+    if (match) {
+      workspaceId = match[1];
+      documentId = match[2];
+    } else {
+      match = normalizedUrl.match(/^\/workspace\/([^/]+)\/global$/);
+      if (match) {
+        workspaceId = match[1];
+        isGlobal = true;
+      } else {
+        logger.warn(`WebSocket upgrade rejected: invalid URL path structure: "${url}"`);
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
         return;
       }
+    }
 
-      authorizedWorkspaceId = document.workspaceId;
+    // ── Step 6: Authorization – verify workspace access ─────────────────────
+    let authorizedWorkspaceId = workspaceId;
+    try {
+      if (!isGlobal) {
+        const document = await this.dbProvider.getDocument(documentId);
+        if (!document) {
+          logger.warn(`WebSocket upgrade rejected: document not found: ${documentId} (user: ${decodedToken.username})`);
+          socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        authorizedWorkspaceId = document.workspaceId;
+      }
+
       if (token !== connectionCode) {
         const isMember = await this.dbProvider.isWorkspaceMemberOrOwner(authorizedWorkspaceId, decodedToken.userId);
         if (!isMember) {
@@ -193,7 +206,7 @@ export class ConnectionManager {
           this.auditLogService.log('ws_auth_rejected', {
             userId: decodedToken.userId,
             workspaceId: authorizedWorkspaceId,
-            documentId,
+            documentId: isGlobal ? 'global' : documentId,
             ipAddress: ip
           });
           socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
@@ -210,7 +223,11 @@ export class ConnectionManager {
 
     // ── Step 7: Complete WebSocket Upgrade ─────────────────────────────────
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      this.handleConnection(ws, decodedToken, authorizedWorkspaceId, documentId, ip);
+      if (isGlobal) {
+        this.handleGlobalConnection(ws, decodedToken, authorizedWorkspaceId, ip);
+      } else {
+        this.handleConnection(ws, decodedToken, authorizedWorkspaceId, documentId, ip);
+      }
     });
   }
 
@@ -344,6 +361,66 @@ export class ConnectionManager {
       this.userConnectionCounts.delete(userId);
     } else {
       this.userConnectionCounts.set(userId, current - 1);
+    }
+  }
+
+  private handleGlobalConnection(
+    ws: WebSocket,
+    user: UserTokenPayload,
+    workspaceId: string,
+    ip: string
+  ): void {
+    logger.info(`WebSocket global connected – user: ${user.username} (${user.userId}), workspace: ${workspaceId}`);
+
+    if (!this.globalSockets.has(workspaceId)) {
+      this.globalSockets.set(workspaceId, new Set());
+    }
+    this.globalSockets.get(workspaceId)!.add(ws);
+
+    let isAlive = true;
+    ws.on('pong', () => { isAlive = true; });
+
+    const pingInterval = setInterval(() => {
+      if (!isAlive) {
+        logger.warn(`Heartbeat failure – terminating global connection for user ${user.username}`);
+        clearInterval(pingInterval);
+        ws.terminate();
+        return;
+      }
+      isAlive = false;
+      ws.ping();
+    }, 30_000);
+
+    ws.on('close', () => {
+      logger.info(`WebSocket global closed – user: ${user.username}`);
+      clearInterval(pingInterval);
+      const set = this.globalSockets.get(workspaceId);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) {
+          this.globalSockets.delete(workspaceId);
+        }
+      }
+    });
+
+    ws.on('error', (err) => {
+      logger.error(`WebSocket global error – user: ${user.username}`, { error: err });
+    });
+  }
+
+  public broadcastSyncNotification(workspaceId: string): void {
+    const set = this.globalSockets.get(workspaceId);
+    if (set && set.size > 0) {
+      logger.info(`Broadcasting sync notification to ${set.size} global sockets in workspace ${workspaceId}`);
+      for (const ws of set) {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send('sync');
+          } catch (err) {
+            logger.error(`Failed to send sync notification to socket`, { error: err });
+          }
+        }
+      }
     }
   }
 }
