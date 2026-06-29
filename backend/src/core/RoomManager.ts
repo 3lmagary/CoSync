@@ -138,22 +138,7 @@ export class RoomManager {
     const room = await this.getOrCreateRoom(documentId);
     room.clients.add(socket);
 
-    // AUTO-DISCOVERY: If document is from Obsidian and doesn't exist in DB document list, register it
-    // This ensures Obsidian notes appear in the web sidebar automatically.
-    if (documentId.startsWith('obs-')) {
-      try {
-        const exists = await this.documentManager.exists(documentId);
-        if (!exists) {
-          logger.info(`Auto-registering discovered Obsidian document: ${documentId}`);
-          // Extract a readable title from the ID (ID format: obs-hash-Title)
-          const parts = documentId.split('-');
-          const title = parts.length > 2 ? parts.slice(2).join('-') : 'Obsidian Note';
-          await this.documentManager.createDocument(documentId, workspaceId, title);
-        }
-      } catch (err) {
-        logger.error(`Failed to auto-register Obsidian document ${documentId}`, { error: err });
-      }
-    }
+
 
     activeConnections.inc({ workspace_id: workspaceId });
     logger.info(`Client joined room ${documentId}. Total clients: ${room.clients.size}`);
@@ -246,6 +231,14 @@ export class RoomManager {
     }
 
     logger.info(`Force-evicting room ${documentId} (${room.clients.size} clients).`);
+    // Close all client sockets to prevent reconnect loop attempts on non-existent document
+    for (const client of room.clients) {
+      try {
+        client.close(1001, 'Room evicted');
+      } catch (err) {
+        logger.error('Error closing socket during room eviction', { error: err });
+      }
+    }
     await this.cleanupRoom(documentId);
   }
 

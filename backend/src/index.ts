@@ -632,6 +632,7 @@ app.delete('/api/workspaces/:workspaceId/documents/:documentId', authMiddleware,
     }
 
     await dbProvider.deleteDocument(documentId);
+    await roomManager.forceEvictRoom(documentId);
     auditLogService.log('delete_document', { userId, workspaceId: document.workspaceId, documentId, ipAddress: req.ip });
     res.status(200).json({ message: 'Document deleted successfully' });
   } catch (err) {

@@ -179,46 +179,26 @@ export class ConnectionManager {
     try {
       const document = await this.dbProvider.getDocument(documentId);
       if (!document) {
-        if (documentId.startsWith('obs-') || token === connectionCode) {
-          const workspaceIdFromUrl = match[1];
-          if (token !== connectionCode) {
-            const isMember = await this.dbProvider.isWorkspaceMemberOrOwner(workspaceIdFromUrl, decodedToken.userId);
-            if (!isMember) {
-              logger.warn(`WebSocket upgrade rejected – unauthorized: user ${decodedToken.username} is not a member of workspace ${workspaceIdFromUrl}`);
-              this.auditLogService.log('ws_auth_rejected', {
-                userId: decodedToken.userId,
-                workspaceId: workspaceIdFromUrl,
-                documentId,
-                ipAddress: ip
-              });
-              socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-              socket.destroy();
-              return;
-            }
-          }
-          authorizedWorkspaceId = workspaceIdFromUrl;
-        } else {
-          logger.warn(`WebSocket upgrade rejected: document not found: ${documentId} (user: ${decodedToken.username})`);
-          socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        logger.warn(`WebSocket upgrade rejected: document not found: ${documentId} (user: ${decodedToken.username})`);
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      authorizedWorkspaceId = document.workspaceId;
+      if (token !== connectionCode) {
+        const isMember = await this.dbProvider.isWorkspaceMemberOrOwner(authorizedWorkspaceId, decodedToken.userId);
+        if (!isMember) {
+          logger.warn(`WebSocket upgrade rejected – unauthorized: user ${decodedToken.username} is not a member of workspace ${authorizedWorkspaceId}`);
+          this.auditLogService.log('ws_auth_rejected', {
+            userId: decodedToken.userId,
+            workspaceId: authorizedWorkspaceId,
+            documentId,
+            ipAddress: ip
+          });
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
           socket.destroy();
           return;
-        }
-      } else {
-        authorizedWorkspaceId = document.workspaceId;
-        if (token !== connectionCode) {
-          const isMember = await this.dbProvider.isWorkspaceMemberOrOwner(authorizedWorkspaceId, decodedToken.userId);
-          if (!isMember) {
-            logger.warn(`WebSocket upgrade rejected – unauthorized: user ${decodedToken.username} is not a member of workspace ${authorizedWorkspaceId}`);
-            this.auditLogService.log('ws_auth_rejected', {
-              userId: decodedToken.userId,
-              workspaceId: authorizedWorkspaceId,
-              documentId,
-              ipAddress: ip
-            });
-            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-            socket.destroy();
-            return;
-          }
         }
       }
     } catch (dbError) {
